@@ -1,0 +1,10 @@
+fastapi==0.136.1
+uvicorn[standard]==0.47.0
+pydantic==2.13.4
+pydantic-settings==2.14.1
+python-dotenv==1.2.2
+pytest==8.4.2
+httpx==0.28.1
+
+openhands-sdk==1.23.0
+openhands-tools==1.23.0
