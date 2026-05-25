@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.services.database_graph_builder import build_database_graph
+from app.services.metadata.database_graph_builder import build_database_graph
 
 router = APIRouter(prefix="/api/database", tags=["database"])
 

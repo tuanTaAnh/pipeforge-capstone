@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 
-from app.services.artifact_store import artifact_store
-from app.services.run_registry import registry
+from app.services.artifacts.artifact_store import artifact_store
+from app.services.runtime.run_registry import registry
 
 router = APIRouter(prefix="/api/runs", tags=["artifacts"])
 

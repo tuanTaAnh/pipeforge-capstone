@@ -1,9 +1,9 @@
 import pytest
 
 from app.schemas.agents import AgentInfo
-from app.services.event_emitter import event_emitter
-from app.services.event_store import event_store
-from app.services.run_registry import registry
+from app.services.runtime.event_emitter import event_emitter
+from app.services.runtime.event_store import event_store
+from app.services.runtime.run_registry import registry
 
 
 @pytest.mark.asyncio

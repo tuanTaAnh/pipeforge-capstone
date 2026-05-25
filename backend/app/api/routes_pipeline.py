@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
-from app.services.pipeline_executor import (
+from app.services.pipeline.pipeline_executor import (
     PipelineExecutionError,
     all_tables_zip_bytes,
     execute_pipeline,
@@ -11,7 +11,7 @@ from app.services.pipeline_executor import (
     preview_table,
     table_csv_bytes,
 )
-from app.services.run_registry import registry
+from app.services.runtime.run_registry import registry
 
 router = APIRouter(prefix="/api/runs", tags=["pipeline"])
 

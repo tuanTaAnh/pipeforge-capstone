@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException
 
 from app.schemas.runs import AnswerRequest
-from app.services.answer_queue import answer_queue
-from app.services.run_registry import registry
+from app.services.decisions.answer_queue import answer_queue
+from app.services.runtime.run_registry import registry
 
 router = APIRouter(prefix="/api/runs", tags=["answers"])
 
