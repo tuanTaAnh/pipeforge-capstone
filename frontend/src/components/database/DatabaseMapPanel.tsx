@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getDatabaseGraph } from "../../api/databaseGraphApi";
 import type {
+  DatabaseGraphColumn,
   DatabaseGraphEdge,
   DatabaseGraphNode,
   DatabaseGraphResponse
@@ -14,16 +15,29 @@ type PositionedNode = DatabaseGraphNode & {
   y: number;
 };
 
-const CANVAS_WIDTH = 1900;
-const MIN_CANVAS_HEIGHT = 760;
-const NODE_WIDTH = 250;
-const NODE_HEIGHT = 148;
-const NODE_GAP = 42;
-
-const MIN_ZOOM = 0.45;
-const MAX_ZOOM = 1.45;
+const CANVAS_WIDTH = 1320;
+const MIN_CANVAS_HEIGHT = 620;
+const NODE_WIDTH = 260;
+const NODE_HEIGHT = 170;
+const MIN_ZOOM = 0.62;
+const MAX_ZOOM = 1.35;
 const ZOOM_STEP = 0.1;
-const DEFAULT_ZOOM = 0.78;
+const DEFAULT_ZOOM = 0.92;
+
+const CANONICAL_LAYER_ORDER: Record<string, number> = {
+  dim_customers: 0,
+  dim_plans: 0,
+  fact_subscriptions: 1,
+  stripe_invoices: 2,
+  stripe_payments: 3
+};
+
+const LAYER_X: Record<number, number> = {
+  0: 80,
+  1: 410,
+  2: 730,
+  3: 1040
+};
 
 function clampZoom(value: number) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(value.toFixed(2))));
@@ -37,6 +51,14 @@ function formatCount(value?: number | null) {
 function formatKey(value: string | string[]) {
   if (Array.isArray(value)) return value.join(" + ");
   return value;
+}
+
+function getJoinLabel(edge: DatabaseGraphEdge) {
+  const fromKey = formatKey(edge.fromColumn);
+  const toKey = formatKey(edge.toColumn);
+
+  if (fromKey === toKey) return fromKey;
+  return `${fromKey} → ${toKey}`;
 }
 
 function getRoleLabel(role: string) {
@@ -71,53 +93,73 @@ function getNodeSearchText(node: DatabaseGraphNode) {
     .toLowerCase();
 }
 
-function getCanvasHeight(nodes: DatabaseGraphNode[]) {
-  const maxRoleCount = Math.max(
-    1,
-    nodes.filter((node) => node.sourceRole === "dimension").length,
-    nodes.filter((node) => node.sourceRole === "fact").length,
-    nodes.filter((node) => !["dimension", "fact"].includes(node.sourceRole)).length
-  );
+function getNodeLayer(node: DatabaseGraphNode) {
+  if (node.id in CANONICAL_LAYER_ORDER) return CANONICAL_LAYER_ORDER[node.id];
+  if (node.tableName in CANONICAL_LAYER_ORDER) return CANONICAL_LAYER_ORDER[node.tableName];
+  if (node.sourceRole === "dimension") return 0;
+  if (node.sourceRole === "fact") return 2;
+  return 1;
+}
 
-  return Math.max(MIN_CANVAS_HEIGHT, 120 + maxRoleCount * NODE_HEIGHT + (maxRoleCount - 1) * NODE_GAP);
+function sortNodesForDisplay(nodes: DatabaseGraphNode[]) {
+  const canonicalOrder = [
+    "dim_customers",
+    "dim_plans",
+    "fact_subscriptions",
+    "stripe_invoices",
+    "stripe_payments"
+  ];
+
+  return [...nodes].sort((left, right) => {
+    const leftIndex = canonicalOrder.indexOf(left.id);
+    const rightIndex = canonicalOrder.indexOf(right.id);
+
+    if (leftIndex !== -1 || rightIndex !== -1) {
+      return (leftIndex === -1 ? 999 : leftIndex) - (rightIndex === -1 ? 999 : rightIndex);
+    }
+
+    return left.label.localeCompare(right.label);
+  });
 }
 
 function layoutNodes(nodes: DatabaseGraphNode[]): { nodes: PositionedNode[]; canvasHeight: number } {
-  const canvasHeight = getCanvasHeight(nodes);
+  const canvasHeight = MIN_CANVAS_HEIGHT;
+  const layerGroups = sortNodesForDisplay(nodes).reduce<Record<number, DatabaseGraphNode[]>>(
+    (groups, node) => {
+      const layer = getNodeLayer(node);
+      groups[layer] = groups[layer] ?? [];
+      groups[layer].push(node);
+      return groups;
+    },
+    {}
+  );
 
-  const grouped = nodes.reduce<Record<string, DatabaseGraphNode[]>>((groups, node) => {
-    const role = node.sourceRole || "source";
-    groups[role] = groups[role] ?? [];
-    groups[role].push(node);
-    return groups;
-  }, {});
+  const positionLayer = (layer: number, layerNodes: DatabaseGraphNode[]): PositionedNode[] => {
+    const x = LAYER_X[layer] ?? LAYER_X[1];
+    const centerY = canvasHeight / 2 - NODE_HEIGHT / 2;
 
-  const dimensions = grouped.dimension ?? [];
-  const facts = grouped.fact ?? [];
-  const other = Object.entries(grouped)
-    .filter(([role]) => !["dimension", "fact"].includes(role))
-    .flatMap(([, roleNodes]) => roleNodes);
+    if (layerNodes.length === 1) {
+      return [{ ...layerNodes[0], x, y: centerY }];
+    }
 
-  const placeColumn = (columnNodes: DatabaseGraphNode[], x: number): PositionedNode[] => {
-    if (columnNodes.length === 0) return [];
+    const gap = 48;
+    const totalHeight = layerNodes.length * NODE_HEIGHT + (layerNodes.length - 1) * gap;
+    const startY = Math.max(80, canvasHeight / 2 - totalHeight / 2);
 
-    const totalHeight = columnNodes.length * NODE_HEIGHT + (columnNodes.length - 1) * NODE_GAP;
-    const startY = Math.max(72, (canvasHeight - totalHeight) / 2);
-
-    return columnNodes.map((node, index) => ({
+    return layerNodes.map((node, index) => ({
       ...node,
       x,
-      y: startY + index * (NODE_HEIGHT + NODE_GAP)
+      y: startY + index * (NODE_HEIGHT + gap)
     }));
   };
 
+  const positionedNodes = Object.entries(layerGroups).flatMap(([layer, layerNodes]) =>
+    positionLayer(Number(layer), layerNodes)
+  );
+
   return {
     canvasHeight,
-    nodes: [
-      ...placeColumn(dimensions, 90),
-      ...placeColumn(other, 820),
-      ...placeColumn(facts, 1500)
-    ]
+    nodes: positionedNodes
   };
 }
 
@@ -126,9 +168,32 @@ function edgePath(fromNode: PositionedNode, toNode: PositionedNode) {
   const fromY = fromNode.y + NODE_HEIGHT / 2;
   const toX = toNode.x;
   const toY = toNode.y + NODE_HEIGHT / 2;
-  const midX = fromX + (toX - fromX) / 2;
+  const distance = Math.max(80, Math.abs(toX - fromX));
+  const curve = Math.min(170, distance * 0.45);
 
-  return `M ${fromX} ${fromY} C ${midX} ${fromY}, ${midX} ${toY}, ${toX} ${toY}`;
+  return `M ${fromX} ${fromY} C ${fromX + curve} ${fromY}, ${toX - curve} ${toY}, ${toX} ${toY}`;
+}
+
+function getPreviewColumns(node: DatabaseGraphNode): DatabaseGraphColumn[] {
+  const selected = new Map<string, DatabaseGraphColumn>();
+
+  const addColumn = (column?: DatabaseGraphColumn) => {
+    if (!column || selected.has(column.name)) return;
+    selected.set(column.name, column);
+  };
+
+  node.columns.filter((column) => column.isPrimaryKey).forEach(addColumn);
+  node.columns.filter((column) => column.reference).forEach(addColumn);
+
+  for (const columnName of node.importantColumns ?? []) {
+    addColumn(node.columns.find((column) => column.name === columnName));
+  }
+
+  for (const column of node.columns) {
+    addColumn(column);
+  }
+
+  return [...selected.values()].slice(0, 5);
 }
 
 function DatabaseNodeCard({
@@ -140,7 +205,7 @@ function DatabaseNodeCard({
   selected: boolean;
   onSelect: (node: DatabaseGraphNode) => void;
 }) {
-  const previewColumns = node.columns.slice(0, 4);
+  const previewColumns = getPreviewColumns(node);
 
   return (
     <button
@@ -157,11 +222,11 @@ function DatabaseNodeCard({
       </div>
 
       <strong title={node.label}>{node.label}</strong>
-      <small title={node.grain ?? node.businessEntity ?? "database source"}>
-        {node.grain ?? node.businessEntity ?? "database source"}
+      <small title={node.businessMeaning ?? node.grain ?? "database source"}>
+        {node.businessMeaning ?? node.grain ?? "database source"}
       </small>
 
-      <ul>
+      <ul className="database-node-column-list">
         {previewColumns.map((column) => (
           <li key={column.name}>
             <span>{column.isPrimaryKey ? "◆" : column.reference ? "↗" : "•"}</span>
@@ -337,8 +402,7 @@ function DatabaseDetailsDrawer({
 
                   return (
                     <span key={edge.id}>
-                      {isOutgoing ? "to" : "from"} {otherTable} ·{" "}
-                      {formatKey(isOutgoing ? edge.fromColumn : edge.toColumn)}
+                      {isOutgoing ? "to" : "from"} {otherTable} · {getJoinLabel(edge)}
                     </span>
                   );
                 })}
@@ -478,7 +542,7 @@ function DatabaseGraphCanvas({
     >
       <div
         className="database-canvas-spacer"
-        style={{ width: CANVAS_WIDTH * zoom + 240, height: canvasHeight * zoom + 180 }}
+        style={{ width: CANVAS_WIDTH * zoom + 96, height: canvasHeight * zoom + 112 }}
       >
         <div
           className="database-canvas"
@@ -488,6 +552,12 @@ function DatabaseGraphCanvas({
             transform: `scale(${zoom})`
           }}
         >
+          <div className="database-flow-caption">
+            <span>Database flow</span>
+            <strong>Customers & plans → subscriptions → invoices → payments</strong>
+            <p>Join keys are shown directly on each relationship line.</p>
+          </div>
+
           <svg
             className="database-edge-layer"
             viewBox={`0 0 ${CANVAS_WIDTH} ${canvasHeight}`}
@@ -513,19 +583,16 @@ function DatabaseGraphCanvas({
 
               if (!fromNode || !toNode) return null;
 
+              const path = edgePath(fromNode, toNode);
               const pathId = `database-edge-path-${edge.id}`;
 
               return (
                 <g key={edge.id} className="database-edge-group">
-                  <path
-                    id={pathId}
-                    className="database-edge-label-path"
-                    d={edgePath(fromNode, toNode)}
-                  />
-                  <path className="database-edge-line" d={edgePath(fromNode, toNode)} />
+                  <path id={pathId} className="database-edge-label-path" d={path} />
+                  <path className="database-edge-line" d={path} />
                   <text>
                     <textPath href={`#${pathId}`} startOffset="50%">
-                      {edge.relationshipType ?? "relationship"}
+                      {getJoinLabel(edge)}
                     </textPath>
                   </text>
                 </g>
@@ -604,9 +671,7 @@ export function DatabaseMapPanel() {
   const positionedNodes = layout.nodes;
 
   const selectedNode =
-    graph?.nodes.find((node) => node.id === selectedNodeId) ??
-    filteredNodes[0] ??
-    null;
+    graph?.nodes.find((node) => node.id === selectedNodeId) ?? filteredNodes[0] ?? null;
 
   useEffect(() => {
     if (filteredNodes.length === 0) {
