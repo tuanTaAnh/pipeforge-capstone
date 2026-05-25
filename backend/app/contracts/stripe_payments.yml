@@ -16,6 +16,7 @@ business_context:
     - "successful_amount is collected cash from successful payments."
     - "refund_amount should be handled by an explicit business rule when building net revenue or net MRR."
     - "Customer attributes are reached through invoice -> subscription -> customer joins."
+    - "payment_month is a month key stored as text in YYYY-MM format, not a full date or timestamp."
 
 artifact_plan:
   package_name: "Stripe Payment Data Product Draft"
@@ -31,18 +32,34 @@ columns:
     primary_key: true
     nullable: false
     description: "Unique payment identifier."
+
   invoice_id:
     type: text
     nullable: false
     description: "Related invoice identifier."
+
   payment_month:
     type: text
+    logical_type: month
+    format: YYYY-MM
+    sql_handling: preserve_as_text
+    sample_values:
+      - "2026-04"
+      - "2026-05"
+      - "2026-06"
     nullable: false
-    description: "Payment month in YYYY-MM format."
+    description: "Payment reporting month stored as a text month key in YYYY-MM format."
+    modeling_notes:
+      - "This is not a full date or timestamp."
+      - "Use this value directly for month filtering, grouping, and joins."
+      - "If normalization is needed, use substr(payment_month, 1, 7)."
+      - "Do not parse this value with date(), datetime(), or strftime() unless a future contract changes sql_handling."
+
   successful_amount:
     type: real
     nullable: false
     description: "Successful collected payment amount."
+
   refund_amount:
     type: real
     nullable: false

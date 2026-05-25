@@ -15,6 +15,7 @@ business_context:
   notes:
     - "discount_amount may be null; business rule should define whether null means zero discount."
     - "Customer attributes are reached through subscription -> customer joins."
+    - "invoice_month is a month key stored as text in YYYY-MM format, not a full date or timestamp."
 
 artifact_plan:
   package_name: "Stripe Invoice Data Product Draft"
@@ -30,18 +31,34 @@ columns:
     primary_key: true
     nullable: false
     description: "Unique invoice identifier."
+
   subscription_id:
     type: text
     nullable: false
     description: "Related subscription identifier."
+
   invoice_month:
     type: text
+    logical_type: month
+    format: YYYY-MM
+    sql_handling: preserve_as_text
+    sample_values:
+      - "2026-04"
+      - "2026-05"
+      - "2026-06"
     nullable: false
-    description: "Invoice month in YYYY-MM format."
+    description: "Invoice reporting month stored as a text month key in YYYY-MM format."
+    modeling_notes:
+      - "This is not a full date or timestamp."
+      - "Use this value directly for month filtering, grouping, and joins."
+      - "If normalization is needed, use substr(invoice_month, 1, 7)."
+      - "Do not parse this value with date(), datetime(), or strftime() unless a future contract changes sql_handling."
+
   invoice_amount:
     type: real
     nullable: false
     description: "Gross invoice amount before discount handling."
+
   discount_amount:
     type: real
     nullable: true

@@ -59,7 +59,7 @@ async def plan_artifacts_with_llm(
         raw = await llm_client.generate_json(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            max_output_tokens=1800,
+            max_output_tokens=5000,
             run_id=run_id,
             step_id="8B",
             call_name="LLM Artifact Planner",
@@ -135,7 +135,7 @@ async def plan_artifacts_with_llm(
                     original_user_prompt=user_prompt,
                     invalid_output=raw if isinstance(raw, dict) else {"raw": raw},
                     validation_errors=validation_errors,
-                    max_output_tokens=1800,
+                    max_output_tokens=5000,
                     run_id=run_id,
                     step_id="8B-repair",
                 )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import yaml
@@ -13,6 +14,31 @@ class ArtifactValidationError(ValueError):
     def __init__(self, errors: list[str]) -> None:
         self.errors = errors
         super().__init__("; ".join(errors))
+
+
+_MONTH_PARSE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "date",
+        re.compile(
+            r"\bdate\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*_month)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "datetime",
+        re.compile(
+            r"\bdatetime\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*_month)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "strftime",
+        re.compile(
+            r"\bstrftime\s*\([^)]*,\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*_month)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
 
 
 def validate_generated_artifacts(
@@ -70,6 +96,7 @@ def validate_generated_artifacts(
             _validate_source_refs(filename, content, context, errors)
             _validate_ref_dependencies(filename, content, expected_model_names, errors)
             _validate_no_obvious_unknown_source(filename, content, context, errors)
+            _validate_month_key_handling(filename, content, errors)
 
     if errors:
         raise ArtifactValidationError(sorted(set(errors)))
@@ -126,3 +153,32 @@ def _validate_no_obvious_unknown_source(filename: str, content: str, context: Va
     for term in suspicious:
         if term in lowered and term not in allowed_source_names:
             errors.append(f"{filename} appears to reference unavailable source/table `{term}`")
+
+
+def _validate_month_key_handling(filename: str, content: str, errors: list[str]) -> None:
+    """Reject common SQLite NULL-producing parsing of YYYY-MM month keys.
+
+    Current PipeForge contracts represent month fields as text month keys with
+    names like invoice_month and payment_month. SQLite date('2026-05',
+    'start of month') returns NULL, so generated models should preserve these
+    values as text or use substr(month_column, 1, 7) for normalization.
+
+    This guard is intentionally generic for *_month columns rather than
+    hard-coding invoice_month/payment_month only.
+    """
+    sql = _strip_sql_comments(content)
+
+    for function_name, pattern in _MONTH_PARSE_PATTERNS:
+        for match in pattern.finditer(sql):
+            column_name = match.group(1)
+            errors.append(
+                f"{filename} parses month-key column `{column_name}` with {function_name}(). "
+                "Month-key columns are stored as YYYY-MM text in the demo contracts. "
+                "Preserve them as text or use substr(column, 1, 7); do not parse them with date(), datetime(), or strftime()."
+            )
+
+
+def _strip_sql_comments(content: str) -> str:
+    without_block_comments = re.sub(r"/\*.*?\*/", " ", content, flags=re.DOTALL)
+    without_line_comments = re.sub(r"--.*?$", " ", without_block_comments, flags=re.MULTILINE)
+    return without_line_comments
