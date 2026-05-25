@@ -4,19 +4,18 @@ data_product:
   name: subscription_revenue_360
   package_name: Subscription Revenue 360 Data Product
   description: >
-    Combine customer, plan, subscription, invoice, and payment data into a monthly
-    revenue 360 mart with MRR, billed revenue, collected revenue, customer attributes,
-    country, industry, product family, and billing interval.
+    Build a compact board-ready monthly revenue mart with gross MRR, discount and
+    refund adjustments, net MRR, and customer segment breakdowns.
 
   aliases:
     - revenue 360
     - subscription revenue 360
-    - customer revenue 360
-    - combine customers subscriptions plans invoices and payments
-    - subscription revenue by customer segment
-    - mrr by country and product family
-    - monthly billed revenue collected revenue and mrr
-    - revenue by customer segment country industry and product family
+    - trusted monthly revenue dataset
+    - monthly revenue dataset
+    - board dashboard revenue
+    - mrr by customer segment
+    - gross and net mrr
+    - refunds and discounts
 
   sources:
     - dim_customers
@@ -34,95 +33,50 @@ data_product:
     - invoices_to_payments_by_invoice_id
 
   grain:
-    - revenue_month
-    - customer_id
-    - subscription_id
-    - plan_id
-    - currency
+    - invoice_month
+    - customer_segment
 
   metrics:
-    - name: monthly_recurring_revenue
+    - name: gross_mrr
       source: fact_subscriptions.mrr_amount
       aggregation: sum
-      description: Subscription MRR amount.
-    - name: billed_amount
-      source: stripe_invoices.invoice_amount
+      description: Gross subscription MRR before discounts and refunds.
+    - name: discount_amount
+      source: stripe_invoices.discount_amount
       aggregation: sum
-      description: Total billed invoice amount.
-    - name: collected_payment_amount
-      source: stripe_payments.amount
+      description: Invoice discount adjustment amount.
+    - name: refund_amount
+      source: stripe_payments.refund_amount
       aggregation: sum
-      description: Total collected payment amount.
-    - name: outstanding_amount
-      expression: billed_amount - collected_payment_amount
-      description: Difference between billed and collected amount.
+      description: Payment refund adjustment amount.
+    - name: net_mrr
+      expression: gross_mrr - discount_amount - refund_amount
+      description: Net MRR after selected adjustment handling.
 
   business_questions:
-    - id: q_subscription_without_invoice_handling
-      question: How should subscriptions without invoices be handled in the revenue 360 mart?
+    - id: q_refunds_discounts_handling
+      question: Should the board dataset report gross MRR only, net MRR only, or both gross and net MRR with adjustment columns?
       priority: must_answer
-      issue_summary: Some subscriptions may not have invoices yet due to trials, recent starts, data lag, or missing invoice mappings.
-      recommended_option_id: keep_as_active_without_billing
-      recommendation_reason: Keeping subscriptions preserves MRR visibility while clearly separating unbilled subscriptions.
+      issue_summary: Refunds and discounts change how finance interprets monthly MRR for the board dashboard.
+      recommended_option_id: gross_and_net
+      recommendation_reason: Showing gross MRR, net MRR, and adjustment columns gives finance transparency and auditability.
       options:
-        - id: keep_as_active_without_billing
-          label: Keep as active MRR without billed revenue
-          resolved_rule: Keep subscriptions without invoices and classify them as active_without_billing.
-          implementation: Preserve subscription rows and set billed_amount and collected_payment_amount to 0 when no invoice exists.
-        - id: exclude_until_invoiced
-          label: Exclude until an invoice exists
-          resolved_rule: Exclude subscriptions without invoices from the billed/collected revenue mart until invoiced.
-          implementation: Filter out subscriptions with no invoice from the final mart but document the exclusion.
-        - id: flag_for_review
-          label: Flag for finance review
-          resolved_rule: Keep subscriptions without invoices and flag them for finance review.
-          implementation: Add requires_finance_review when subscription has no invoice.
-
-    - id: q_multi_currency_revenue_360
-      question: How should multi-currency revenue be reported in the revenue 360 mart?
-      priority: must_answer
-      issue_summary: Revenue is present in multiple currencies across subscriptions, invoices, and payments.
-      recommended_option_id: group_by_currency
-      recommendation_reason: Grouping by currency avoids inventing FX rates while preserving correct local-currency metrics.
-      options:
-        - id: group_by_currency
-          label: Keep metrics grouped by currency
-          resolved_rule: Report MRR, billed revenue, and collected revenue separately by currency.
-          implementation: Include currency in the final mart grain and do not convert FX.
-        - id: convert_to_usd
-          label: Convert to USD using provided FX rate column
-          resolved_rule: Convert all revenue metrics to USD only if a trusted FX rate is available.
-          implementation: Use fx_rate_to_usd if present; otherwise flag missing FX rates.
-        - id: flag_multi_currency
-          label: Flag multi-currency records for finance review
-          resolved_rule: Keep local currency values and flag multi-currency records for finance review.
-          implementation: Add multi_currency_flag where source currencies differ.
-
-    - id: q_unmatched_payment_handling
-      question: How should payments without a matching invoice be handled in Revenue 360?
-      priority: must_answer
-      issue_summary: Some payment records may not map to an invoice but still represent cash collection evidence.
-      recommended_option_id: keep_as_unmatched_cash
-      recommendation_reason: Keeping unmatched cash separately preserves auditability without overstating invoice reconciliation.
-      options:
-        - id: keep_as_unmatched_cash
-          label: Keep as unmatched cash collection
-          resolved_rule: Keep unmatched payments in a separate unmatched cash bucket.
-          implementation: Exclude unmatched payments from invoice-level reconciliation and document them as unmatched cash.
-        - id: exclude_until_mapped
-          label: Exclude until mapped
-          resolved_rule: Exclude unmatched payments until mapped to an invoice.
-          implementation: Filter unmatched payments from revenue metrics.
-        - id: flag_for_review
-          label: Flag for finance review
-          resolved_rule: Flag unmatched payments for finance review.
-          implementation: Add requires_finance_review for unmatched payment records.
+        - id: gross_only
+          label: Report gross MRR only and show adjustments separately
+          resolved_rule: Keep gross MRR unchanged and expose discounts/refunds as separate supporting columns.
+          implementation: Keep gross_mrr from subscriptions and add discount_amount/refund_amount columns without netting them into the primary MRR metric.
+        - id: net_only
+          label: Report net MRR after discounts and refunds
+          resolved_rule: Net MRR equals gross MRR minus discount and refund adjustments.
+          implementation: Derive net_mrr = gross_mrr - discount_amount - refund_amount.
+        - id: gross_and_net
+          label: Report both gross MRR and net MRR with adjustment breakdown
+          resolved_rule: Report gross_mrr, discount_amount, refund_amount, and net_mrr together.
+          implementation: Build a mart with gross_mrr, discount_amount, refund_amount, and net_mrr at month/segment grain.
 
   artifact_plan:
     package_name: Subscription Revenue 360 Data Product
     source_name: subscription_revenue_360
-    staging_model: stg_demo__subscriptions
-    intermediate_model: int_subscription__revenue_360
     final_mart_name: mart_subscription__revenue_360_monthly
     model_files:
       - stg_demo__customers.sql
@@ -130,11 +84,10 @@ data_product:
       - stg_demo__subscriptions.sql
       - stg_stripe__invoices.sql
       - stg_stripe__payments.sql
-      - int_subscription__revenue_360.sql
+      - int_subscription__mrr_adjustments.sql
       - mart_subscription__revenue_360_monthly.sql
     test_files:
       - schema.yml
-      - custom_tests/test_revenue_360_grain_unique.sql
       - custom_tests/test_revenue_360_metrics_not_null.sql
     documentation_files:
       - pipeline_summary.md
@@ -145,81 +98,26 @@ data_product:
         type: staging
         source: dim_customers
         output_model: stg_demo__customers
-        description: Clean and deduplicate customers by customer_id.
       - id: stg_plans
         type: staging
         source: dim_plans
         output_model: stg_demo__plans
-        description: Clean and deduplicate plans by plan_id.
       - id: stg_subscriptions
         type: staging
         source: fact_subscriptions
         output_model: stg_demo__subscriptions
-        description: Clean subscriptions and preserve customer_id, plan_id, mrr_amount, status, and currency.
       - id: stg_invoices
         type: staging
         source: stripe_invoices
         output_model: stg_stripe__invoices
-        description: Clean invoices and derive invoice_month from issued_at.
       - id: stg_payments
         type: staging
         source: stripe_payments
         output_model: stg_stripe__payments
-        description: Clean payments and keep invoice_id for reconciliation.
-      - id: payments_by_invoice
+      - id: monthly_adjustments
         type: aggregate
-        input: stg_stripe__payments
-        group_by:
-          - invoice_id
-          - currency
-        metrics:
-          - name: collected_payment_amount
-            expression: "sum(case when status = 'paid' then amount else 0 end)"
-          - name: payment_count
-            expression: "count(*)"
-        description: Aggregate payments by invoice_id and currency before joining to invoices.
-      - id: invoices_with_payments
-        type: left_join
-        relationship_id: invoices_to_payments_by_invoice_id
-        left: stg_stripe__invoices
-        right: payments_by_invoice
-        on:
-          - left: invoice_id
-            right: invoice_id
-          - left: currency
-            right: currency
-        description: Attach collected payment amount to invoice records.
-      - id: subscription_revenue_360
-        type: multi_join
-        output_model: int_subscription__revenue_360
-        base: stg_demo__subscriptions
-        joins:
-          - relationship_id: customers_to_subscriptions
-            left: stg_demo__customers
-            right: stg_demo__subscriptions
-            join_type: left
-            direction: dimension_to_fact
-          - relationship_id: plans_to_subscriptions
-            left: stg_demo__plans
-            right: stg_demo__subscriptions
-            join_type: left
-            direction: dimension_to_fact
-          - relationship_id: subscriptions_to_invoices
-            left: stg_demo__subscriptions
-            right: invoices_with_payments
-            join_type: left
-            direction: fact_to_fact
-        description: Combine customer, plan, subscription, invoice, and payment evidence.
-      - id: monthly_revenue_360
+        description: Aggregate discounts and refunds by subscription and invoice_month before joining to gross MRR.
+      - id: final_mart
         type: aggregate
-        input: int_subscription__revenue_360
-        group_by:
-          - revenue_month
-          - customer_segment
-          - country
-          - industry
-          - product_family
-          - billing_interval
-          - currency
         output_model: mart_subscription__revenue_360_monthly
-        description: Build monthly Revenue 360 mart.
+        group_by: [invoice_month, customer_segment]

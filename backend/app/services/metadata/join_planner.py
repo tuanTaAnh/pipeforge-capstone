@@ -142,18 +142,18 @@ def _default_join_plan_steps(data_product: dict[str, Any]) -> list[dict[str, Any
                 "id": "payments_by_invoice",
                 "type": "aggregate",
                 "input": "stg_stripe__payments",
-                "group_by": ["invoice_id", "currency"],
+                "group_by": ["invoice_id"],
                 "metrics": [
                     {
                         "name": "collected_payment_amount",
-                        "expression": "sum(case when status = 'paid' then amount else 0 end)",
+                        "expression": "sum(successful_amount)",
                     },
                     {
                         "name": "payment_count",
                         "expression": "count(*)",
                     },
                 ],
-                "description": "Aggregate payments to invoice_id/currency before joining to invoices.",
+                "description": "Aggregate payments to invoice_id before joining to invoices.",
             },
             {
                 "id": "invoice_payment_reconciliation",
@@ -163,19 +163,18 @@ def _default_join_plan_steps(data_product: dict[str, Any]) -> list[dict[str, Any
                 "right": "payments_by_invoice",
                 "on": [
                     {"left": "invoice_id", "right": "invoice_id"},
-                    {"left": "currency", "right": "currency"},
                 ],
                 "output_model": "int_billing__invoice_payment_reconciliation",
                 "description": (
                     "Left join invoices to aggregated payments. Preserve unmatched invoices and "
-                    "calculate collected_payment_amount, reconciliation_difference, and payment coverage status."
+                    "calculate collected_successful_amount, reconciliation_difference, and payment coverage summary."
                 ),
             },
             {
                 "id": "monthly_reconciliation",
                 "type": "aggregate",
                 "input": "int_billing__invoice_payment_reconciliation",
-                "group_by": ["invoice_month", "customer_segment", "currency"],
+                "group_by": ["invoice_month", "customer_segment"],
                 "metrics": [
                     "sum(billed_amount) as billed_amount",
                     "sum(collected_payment_amount) as collected_payment_amount",

@@ -9,6 +9,7 @@ from app.services.artifacts.artifact_store import artifact_store
 from app.services.database.database_service import fetch_all
 from app.services.planning.llm_direct_query_planner import plan_direct_query_with_llm
 from app.services.runtime.event_emitter import event_emitter
+from app.services.runtime.flow_logger import log_step_failure, log_step_start, log_step_success
 
 
 ANALYTICS_AGENT = AgentInfo(
@@ -26,6 +27,7 @@ async def run_direct_analytics_query(
     metadata_context: dict[str, Any],
     previous_user_answers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    flow_timer = log_step_start(run_id, "5A", "Direct Analytics Flow", {"selected_sources": request_plan.selected_sources, "prompt": prompt})
     await event_emitter.emit(run_id, "sub_agent_started", ANALYTICS_AGENT, {"status": "running"})
     await event_emitter.emit(
         run_id,
@@ -58,6 +60,7 @@ async def run_direct_analytics_query(
         request_plan=request_plan,
         metadata_context=metadata_context,
         previous_user_answers=previous_user_answers or [],
+        run_id=run_id,
     )
 
     await event_emitter.emit(
@@ -87,7 +90,13 @@ async def run_direct_analytics_query(
         },
     )
 
-    rows = fetch_all(direct_plan.sql)
+    execution_timer = log_step_start(run_id, "6A", "Execute validated direct SQL", {"sql_preview": direct_plan.sql[:800]})
+    try:
+        rows = fetch_all(direct_plan.sql)
+        log_step_success(run_id, "6A", "Execute validated direct SQL", started_at=execution_timer, details={"row_count": len(rows), "preview_rows": rows[:5]})
+    except Exception as exc:
+        log_step_failure(run_id, "6A", "Execute validated direct SQL", started_at=execution_timer, error=exc, details={"sql_preview": direct_plan.sql[:1200]})
+        raise
 
     await event_emitter.emit(
         run_id,
@@ -109,6 +118,8 @@ async def run_direct_analytics_query(
     result_json = json.dumps(rows, ensure_ascii=False, indent=2, default=str)
     answer_markdown = _format_direct_answer_markdown(prompt, request_plan, direct_plan, rows)
 
+    artifact_timer = log_step_start(run_id, "7A", "Return direct answer and analytics artifacts", {"row_count": len(rows)})
+
     await artifact_store.write_artifact(run_id, ANALYTICS_AGENT, "semantic_query_plan.json", semantic_plan_json, "json")
     await artifact_store.write_artifact(run_id, ANALYTICS_AGENT, "analytics_query.sql", direct_plan.sql, "sql")
     await artifact_store.write_artifact(run_id, ANALYTICS_AGENT, "analytics_result.json", result_json, "json")
@@ -128,6 +139,9 @@ async def run_direct_analytics_query(
         ANALYTICS_AGENT,
         {"status": "completed", "summary": "Direct analytics answer completed."},
     )
+
+    log_step_success(run_id, "7A", "Return direct answer and analytics artifacts", started_at=artifact_timer, details={"artifacts": ["semantic_query_plan.json", "analytics_query.sql", "analytics_result.json", "analytics_answer.md"], "chat_answer_preview": chat_answer[:500]})
+    log_step_success(run_id, "5A", "Direct Analytics Flow", started_at=flow_timer, details={"row_count": len(rows)})
 
     return {
         "semantic_plan": semantic_artifact,
@@ -207,7 +221,7 @@ def _rows_to_business_text(rows: list[dict[str, Any]]) -> str:
 
 
 def _row_label(row: dict[str, Any]) -> tuple[str | None, str | None]:
-    for key in ["currency", "customer_segment", "country", "customer_name", "customer_id", "plan_name", "plan_id", "month", "invoice_month", "revenue_month"]:
+    for key in ["customer_name", "customer_id", "customer_segment", "plan_name", "plan_id", "invoice_month", "payment_month", "month", "revenue_month"]:
         if row.get(key) not in {None, ""}:
             return key, str(row[key])
     return None, None

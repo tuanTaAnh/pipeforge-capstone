@@ -12,6 +12,7 @@ from openhands.tools.file_editor import FileEditorTool
 
 from app.core.config import settings
 from app.core.paths import PROMPTS_DIR
+from app.services.validation.validation_context import ValidationContext, build_validation_context_from_sources
 
 
 ArtifactKind = Literal["sql", "yaml", "markdown", "json", "text"]
@@ -27,6 +28,7 @@ OPENHANDS_TIMEOUT_SECONDS = int(os.getenv("OPENHANDS_TIMEOUT_SECONDS", "180"))
 OPENHANDS_MAX_CONCURRENCY = int(os.getenv("OPENHANDS_MAX_CONCURRENCY", "1"))
 OPENHANDS_TASK_DELAY_SECONDS = float(os.getenv("OPENHANDS_TASK_DELAY_SECONDS", "0"))
 OPENHANDS_REPAIR_ATTEMPTS = int(os.getenv("OPENHANDS_REPAIR_ATTEMPTS", "1"))
+OPENHANDS_FILE_TASK_TIMEOUT_SECONDS = int(os.getenv("OPENHANDS_FILE_TASK_TIMEOUT_SECONDS", "120"))
 
 _OPENHANDS_SEMAPHORE = asyncio.Semaphore(max(1, OPENHANDS_MAX_CONCURRENCY))
 
@@ -112,16 +114,21 @@ def _render_prompt(
     source_profile_context: str,
     business_rules_context: str,
     artifact_plan: dict[str, Any],
+    validation_context: ValidationContext | None = None,
     missing_files: list[str] | None = None,
     original_task_prompt: str | None = None,
+    task_scope_context: str | None = None,
 ) -> str:
     missing_files = missing_files or []
+    allowed_source_context = validation_context.prompt_context() if validation_context else "No run-level validation context was provided."
 
     replacements = {
         "{{WORKSPACE_ROOT}}": str(workspace),
         "{{SOURCE_PROFILE_CONTEXT}}": source_profile_context,
         "{{BUSINESS_RULES_CONTEXT}}": business_rules_context,
         "{{ARTIFACT_PLAN_CONTEXT}}": _format_artifact_plan_context(artifact_plan),
+        "{{ALLOWED_SOURCE_CONTEXT}}": allowed_source_context,
+        "{{TASK_SCOPE_CONTEXT}}": task_scope_context or "Generate exactly the files listed in Expected files.",
         "{{EXPECTED_FILES}}": _format_relative_files(expected_files),
         "{{EXPECTED_ABSOLUTE_PATHS}}": _format_absolute_files(workspace, expected_files),
         "{{MISSING_FILES}}": _format_relative_files(missing_files),
@@ -289,8 +296,19 @@ async def _run_task_and_collect_with_repair(
     source_profile_context: str,
     business_rules_context: str,
     artifact_plan: dict[str, Any],
+    validation_context: ValidationContext | None = None,
+    timeout_seconds: int = OPENHANDS_TIMEOUT_SECONDS,
 ) -> list[GeneratedArtifact]:
-    await _run_openhands_task(workspace, task_prompt)
+    try:
+        await _run_openhands_task(workspace, task_prompt, timeout_seconds=timeout_seconds)
+    except RuntimeError as exc:
+        # OpenHands sometimes creates the requested file(s) but keeps looping
+        # instead of finishing. For bounded tasks, salvage non-empty expected
+        # files and let the central artifact validator decide correctness.
+        artifacts, missing, empty = _collect_expected_files(workspace, expected_files)
+        if missing or empty:
+            raise
+        return artifacts
 
     artifacts, missing, empty = _collect_expected_files(workspace, expected_files)
 
@@ -308,11 +326,12 @@ async def _run_task_and_collect_with_repair(
             source_profile_context=source_profile_context,
             business_rules_context=business_rules_context,
             artifact_plan=artifact_plan,
+            validation_context=validation_context,
             missing_files=[*missing, *empty],
             original_task_prompt=task_prompt,
         )
 
-        await _run_openhands_task(workspace, repair_prompt)
+        await _run_openhands_task(workspace, repair_prompt, timeout_seconds=timeout_seconds)
 
         artifacts, missing, empty = _collect_expected_files(workspace, expected_files)
 
@@ -327,6 +346,7 @@ async def generate_model_artifacts_with_openhands(
     source_profile_context: str,
     business_rules_context: str,
     artifact_plan: dict[str, Any],
+    validation_context: ValidationContext | None = None,
 ) -> list[GeneratedArtifact]:
     expected_files = _artifact_plan_files(
         artifact_plan,
@@ -337,27 +357,43 @@ async def generate_model_artifacts_with_openhands(
             "mart_table__summary.sql",
         ],
     )
+    validation_context = validation_context or build_validation_context_from_sources(
+        selected_sources=artifact_plan.get("selected_sources", []),
+        artifact_plan=artifact_plan,
+    )
 
     workspace = _prepare_workspace(run_id, "model-builder", expected_files)
-
     prompt_template = _load_prompt("model_builder_prompt.txt")
-    task_prompt = _render_prompt(
-        template=prompt_template,
-        workspace=workspace,
-        expected_files=expected_files,
-        source_profile_context=source_profile_context,
-        business_rules_context=business_rules_context,
-        artifact_plan=artifact_plan,
-    )
 
-    return await _run_task_and_collect_with_repair(
-        workspace=workspace,
-        task_prompt=task_prompt,
-        expected_files=expected_files,
-        source_profile_context=source_profile_context,
-        business_rules_context=business_rules_context,
-        artifact_plan=artifact_plan,
-    )
+    artifacts_by_filename: dict[str, GeneratedArtifact] = {}
+    for filename in expected_files:
+        task_prompt = _render_prompt(
+            template=prompt_template,
+            workspace=workspace,
+            expected_files=[filename],
+            source_profile_context=source_profile_context,
+            business_rules_context=business_rules_context,
+            artifact_plan=artifact_plan,
+            validation_context=validation_context,
+            task_scope_context=(
+                "Bounded model-builder task: create this one SQL model only. "
+                f"Do not create or inspect any other file. Target file: {filename}."
+            ),
+        )
+        file_artifacts = await _run_task_and_collect_with_repair(
+            workspace=workspace,
+            task_prompt=task_prompt,
+            expected_files=[filename],
+            source_profile_context=source_profile_context,
+            business_rules_context=business_rules_context,
+            artifact_plan=artifact_plan,
+            validation_context=validation_context,
+            timeout_seconds=OPENHANDS_FILE_TASK_TIMEOUT_SECONDS,
+        )
+        for artifact in file_artifacts:
+            artifacts_by_filename[artifact["filename"]] = artifact
+
+    return [artifacts_by_filename[filename] for filename in expected_files if filename in artifacts_by_filename]
 
 
 async def generate_test_artifacts_with_openhands(
@@ -365,6 +401,7 @@ async def generate_test_artifacts_with_openhands(
     source_profile_context: str,
     business_rules_context: str,
     artifact_plan: dict[str, Any],
+    validation_context: ValidationContext | None = None,
 ) -> list[GeneratedArtifact]:
     expected_files = _artifact_plan_files(
         artifact_plan,
@@ -375,6 +412,10 @@ async def generate_test_artifacts_with_openhands(
         ],
     )
 
+    validation_context = validation_context or build_validation_context_from_sources(
+        selected_sources=artifact_plan.get("selected_sources", []),
+        artifact_plan=artifact_plan,
+    )
     workspace = _prepare_workspace(run_id, "test-writer", expected_files)
 
     prompt_template = _load_prompt("test_writer_prompt.txt")
@@ -385,6 +426,7 @@ async def generate_test_artifacts_with_openhands(
         source_profile_context=source_profile_context,
         business_rules_context=business_rules_context,
         artifact_plan=artifact_plan,
+        validation_context=validation_context,
     )
 
     return await _run_task_and_collect_with_repair(
@@ -394,6 +436,7 @@ async def generate_test_artifacts_with_openhands(
         source_profile_context=source_profile_context,
         business_rules_context=business_rules_context,
         artifact_plan=artifact_plan,
+        validation_context=validation_context,
     )
 
 
@@ -402,6 +445,7 @@ async def generate_doc_artifacts_with_openhands(
     source_profile_context: str,
     business_rules_context: str,
     artifact_plan: dict[str, Any],
+    validation_context: ValidationContext | None = None,
 ) -> list[GeneratedArtifact]:
     expected_files = _artifact_plan_files(
         artifact_plan,
@@ -411,6 +455,10 @@ async def generate_doc_artifacts_with_openhands(
         ],
     )
 
+    validation_context = validation_context or build_validation_context_from_sources(
+        selected_sources=artifact_plan.get("selected_sources", []),
+        artifact_plan=artifact_plan,
+    )
     workspace = _prepare_workspace(run_id, "doc-writer", expected_files)
 
     prompt_template = _load_prompt("documentation_writer_prompt.txt")
@@ -421,6 +469,7 @@ async def generate_doc_artifacts_with_openhands(
         source_profile_context=source_profile_context,
         business_rules_context=business_rules_context,
         artifact_plan=artifact_plan,
+        validation_context=validation_context,
     )
 
     return await _run_task_and_collect_with_repair(
@@ -430,4 +479,5 @@ async def generate_doc_artifacts_with_openhands(
         source_profile_context=source_profile_context,
         business_rules_context=business_rules_context,
         artifact_plan=artifact_plan,
+        validation_context=validation_context,
     )

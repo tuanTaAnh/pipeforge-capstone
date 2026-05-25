@@ -1,52 +1,27 @@
 source:
   name: dim_customers
   dbt_source: "source('demo', 'dim_customers')"
-  description: "Customer dimension used for subscription revenue, segmentation, country, and industry analytics."
+  description: "Minimal customer dimension for customer identity and segment reporting."
   owner: "Finance Analytics"
-  aliases:
-    - customers
-    - customer dimension
-    - customer segment
-    - customer country
-    - customer industry
-    - accounts
-    - customer attributes
+  aliases: [customers, customer dimension, customer name, customer segment, accounts]
 
 business_context:
-  data_product_goal: "Provide trusted customer attributes for revenue, billing, and collection analytics."
+  data_product_goal: "Provide customer names and segments for revenue analytics."
   final_mart: "dim_customers_clean"
   metric_name: "customer_count"
-  grain:
-    - customer_id
-  primary_metric_dimensions:
-    - customer_segment
-    - country
-    - industry
-    - account_tier
-  keywords:
-    - customer
-    - segment
-    - country
-    - industry
-    - account tier
+  grain: [customer_id]
+  primary_metric_dimensions: [customer_name, customer_segment]
+  keywords: [customer, customer name, segment]
   notes:
-    - "Customer records are dimensions and should usually be joined to fact tables through customer_id."
+    - "Join customer facts through customer_id."
 
 artifact_plan:
   package_name: "Customer Dimension Data Product Draft"
   source_name: "dim_customers"
-  staging_model: "stg_demo__customers"
-  intermediate_model: "int_customers__clean"
   final_mart_name: "dim_customers_clean"
-  model_files:
-    - "stg_demo__customers.sql"
-    - "int_customers__clean.sql"
-    - "dim_customers_clean.sql"
-  test_files:
-    - "schema.yml"
-    - "custom_tests/test_customer_id_not_null.sql"
-  documentation_files:
-    - "pipeline_summary.md"
+  model_files: [stg_demo__customers.sql]
+  test_files: [schema.yml]
+  documentation_files: [pipeline_summary.md]
 
 columns:
   customer_id:
@@ -54,61 +29,12 @@ columns:
     primary_key: true
     nullable: false
     description: "Unique customer identifier."
-
   customer_name:
     type: text
     nullable: false
     description: "Customer display name."
-
   customer_segment:
     type: text
-    nullable: true
+    nullable: false
     description: "Customer reporting segment."
-    valid_values:
-      - enterprise
-      - mid_market
-      - startup
-      - self_serve
-    business_rules:
-      require_decision_when_null_rate_ge: 0.02
-      decision_reason: "Missing customer segment affects revenue segmentation."
-
-  country:
-    type: text
-    nullable: false
-    description: "Customer country code."
-    valid_values:
-      - US
-      - DE
-      - GB
-      - FR
-      - NL
-      - VN
-      - SG
-
-  industry:
-    type: text
-    nullable: true
-    description: "Customer industry grouping."
-
-  account_tier:
-    type: text
-    nullable: true
-    description: "Commercial account tier."
-    valid_values:
-      - strategic
-      - growth
-      - standard
-
-  signup_date:
-    type: text
-    nullable: true
-    description: "Customer signup date."
-
-  is_active:
-    type: integer
-    nullable: false
-    description: "1 if customer is active, else 0."
-    valid_values:
-      - 0
-      - 1
+    valid_values: [enterprise, mid_market, startup, self_serve]

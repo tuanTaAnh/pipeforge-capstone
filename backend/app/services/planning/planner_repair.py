@@ -14,6 +14,8 @@ async def repair_planner_json(
     invalid_output: dict[str, Any],
     validation_errors: list[str],
     max_output_tokens: int = 4000,
+    run_id: str | None = None,
+    step_id: str = "planner-repair",
 ) -> dict[str, Any]:
     repair_prompt = load_prompt_text("planner_repair_prompt.txt")
     user_prompt = repair_prompt.replace("{{ORIGINAL_SYSTEM_PROMPT}}", original_system_prompt)
@@ -31,4 +33,7 @@ async def repair_planner_json(
         system_prompt="You repair invalid PipeForge planner JSON. Return corrected JSON only.",
         user_prompt=user_prompt,
         max_output_tokens=max_output_tokens,
+        run_id=run_id,
+        step_id=step_id,
+        call_name="LLM Planner JSON Repair",
     )

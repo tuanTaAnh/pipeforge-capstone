@@ -24,6 +24,6 @@ Rules:
 - Use mart models for final user-facing outputs.
 - Include schema.yml and relevant custom tests.
 - Include pipeline_summary.md.
-- Do not invent unavailable sources, columns, FX tables, calendar tables, or lookup tables.
-- Preserve currency unless an FX source exists.
+- Do not invent unavailable sources, columns, FX tables, calendar tables, lookup tables, or currency logic.
 - Filenames must be relative paths only and stay inside the artifact workspace.
+- The simplified demo database has no currency column. Do not add currency grouping or FX conversion.

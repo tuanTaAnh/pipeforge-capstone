@@ -20,6 +20,7 @@ from app.services.pipeline.dbt_sql_compiler import (
 )
 from app.services.pipeline.pipeline_sql_safety_validator import validate_pipeline_model_sql
 from app.services.runtime.run_registry import registry
+from app.services.validation.validation_context import validation_context_from_dict
 from app.utils.time import utcnow
 
 
@@ -382,11 +383,16 @@ def _build_pipeline_source_context(
     selected_source_tables = _collect_selected_source_tables(run)
     declared_source_dependencies = _collect_declared_source_dependencies(run)
 
+    validation_context = validation_context_from_dict(run.get("validationContext"))
+    if validation_context:
+        selected_source_tables.update(validation_context.selected_source_names)
+        declared_source_dependencies.update(validation_context.allowed_source_dependencies)
+
     for source_table in selected_source_tables:
         if source_table in source_tables:
             declared_source_dependencies.update(_infer_source_dependencies_for_table(source_table))
 
-    source_table_mapping: dict[str, str] = {}
+    source_table_mapping: dict[str, str] = dict(validation_context.source_table_mapping) if validation_context else {}
     allowed_source_dependencies: set[SourceDependency] = set()
 
     for dependency in declared_source_dependencies:

@@ -15,9 +15,11 @@ Rules:
 - SQL must be read-only and start with SELECT or WITH.
 - Do not use INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, CREATE, REPLACE, ATTACH, DETACH, PRAGMA, or VACUUM.
 - Use only selected sources and columns present in the metadata.
-- Do not invent tables, columns, FX rates, calendar/date spine tables, or lookup tables.
+- Do not invent tables, columns, FX rates, calendar/date spine tables, lookup tables, currency columns, or status columns.
 - If no date range is mentioned, do not add one.
-- If multiple currencies exist and no FX source exists, group by currency or clearly preserve currency.
 - Use the user's wording and the metric/source descriptions to choose the right tables and columns.
-- For successful payment questions, use the payment source and payment status semantics from metadata; do not switch to billed invoice revenue unless the user asks for invoices/billed revenue.
+- For successful payment questions, use stripe_payments.successful_amount; do not switch to billed invoice revenue unless the user asks for invoices/billed revenue.
+- For MRR questions, use fact_subscriptions.mrr_amount.
+- For customer-level MRR questions, join fact_subscriptions to dim_customers on customer_id and include customer_name when useful.
+- If the user asks "Who is the customer with highest MRR?", generate a direct top-1 customer query ordered by sum(mrr_amount) desc.
 - If the user asks min/max, generate MIN/MAX, not SUM.

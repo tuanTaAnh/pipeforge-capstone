@@ -36,5 +36,7 @@ Rules:
 - Do not invent sources, metrics, dimensions, data products, tables, or columns.
 - If the user uses an ambiguous business term such as income, revenue, performance, value, or growth, ask a clarification unless metadata gives a clear safe mapping.
 - If the user does not mention a date range, do not assume one.
-- If no FX source exists, preserve currency and warn when relevant.
+- The simplified demo database has no currency column; never ask currency or FX clarification.
+- If the user explicitly says refund or discount handling is unclear, ask one clarification question with options for gross only, net only, or both gross and net with adjustment columns.
 - Use selected_data_product when a known data product matches well; otherwise use selected_sources.
+- For "highest MRR customer" questions, choose direct_analytics with fact_subscriptions and dim_customers.
