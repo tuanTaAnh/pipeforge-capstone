@@ -1,101 +1,102 @@
 # PipeForge
 
-PipeForge is an AI-assisted data product builder that turns natural-language business analytics requests into reviewable and executable data pipeline drafts.
+**Live demo:** https://anhtuan19981998-pipeforge-demo.hf.space
 
-It profiles available data sources, identifies business-critical decisions, generates dbt-style SQL/YAML/Markdown artifacts, and lets users test the generated SQL pipeline in a temporary demo data mart.
+PipeForge is an LLM-powered data pipeline builder that turns natural-language analytics requests into transparent data workflows, SQL artifacts, data product drafts, tests, documentation, and executable pipeline outputs.
+
+The project demonstrates how an AI system can combine metadata-aware planning, human-in-the-loop clarification, source profiling, SQL generation, validation, targeted repair, and a traceable frontend experience for analytics engineering workflows.
 
 ---
 
 ## Overview
 
-PipeForge is designed for analytics, data engineering, and finance teams that need to quickly turn business requests into structured data product drafts.
-
-A user can describe a business need such as:
+PipeForge accepts a business analytics request such as:
 
 ```text
-Our finance team needs a trusted monthly revenue dataset from Stripe for a board dashboard.
-We need MRR by customer segment, but we are not sure how refunds and discounts should be handled.
-Can you prepare this as a data product draft for our analytics team?
+Our finance team needs a trusted monthly revenue dataset from Stripe for a board dashboard. We need MRR by customer segment, but we are not sure how refunds and discounts should be handled. Can you prepare this as a data product draft for our analytics team?
 ```
 
-PipeForge then guides the request through a transparent workflow:
+The system then:
 
-```text
-Business request
-→ request classification
-→ source or data product selection
-→ source profiling
-→ business rule resolution
-→ SQL/test/documentation artifact generation
-→ executable demo pipeline
-→ output table preview and CSV download
-```
+1. Loads source metadata, semantic definitions, relationships, and data product contracts.
+2. Uses an LLM request planner to classify the request.
+3. Routes the request to either direct analytics or data product generation.
+4. Asks the user for clarification when a business rule is ambiguous.
+5. Profiles selected sources with code/tools.
+6. Generates SQL models, tests, and documentation using bounded agent tasks.
+7. Validates generated artifacts with deterministic code.
+8. Repairs only failed artifacts when needed.
+9. Streams every step to the frontend as a real-time execution trace.
+
+The goal is not only to generate outputs, but to make the reasoning, tool calls, artifacts, validation, and final results visible and reviewable.
 
 ---
 
 ## Key Features
 
-### Natural-Language Data Product Requests
+### 1. Natural-language request planning
 
-Users describe the analytics output they need in plain English. PipeForge classifies the request and routes it to either:
+PipeForge uses an LLM planner to understand whether a request is:
 
-- direct analytics question answering
-- single-source data product generation
-- multi-source/join-based data product generation
+- A direct analytics question
+- A data product / pipeline generation request
+- A request that needs user clarification
+- An out-of-scope question
 
-### Guided Agent Workflow
+Example direct analytics request:
 
-The backend runs a transparent workflow with multiple logical agents:
+```text
+Who is the customer with highest MRR?
+```
 
-- Pipeline Architect
-- Source Inspector
-- Model Builder
-- Test Writer
-- Documentation Writer
+Example data product request:
 
-The frontend displays run status, workflow trace, tool activity, generated artifacts, and execution results.
+```text
+Create a monthly billed revenue pipeline from Stripe invoices for the analytics team.
+```
 
-### Source Profiling
+---
 
-PipeForge inspects selected source tables and generates source context such as:
+### 2. Direct analytics mode
 
-- row counts
-- column names and types
-- sample records
-- contract-aware quality checks
-- business-relevant data issues
+For simple analytical questions, PipeForge generates a safe read-only SQL query, validates it, executes it, and returns answer artifacts.
 
-Generated profiling artifacts include:
+Typical output artifacts:
+
+```text
+semantic_query_plan.json
+analytics_query.sql
+analytics_result.json
+analytics_answer.md
+```
+
+Example:
+
+```text
+What are the minimum and maximum successful payment amounts?
+```
+
+Expected behavior:
+
+- Selects the relevant source table
+- Generates safe SQL
+- Executes the query
+- Returns a concise answer and result artifact
+
+---
+
+### 3. Data product generation mode
+
+For broader requests such as building a reusable dataset, mart, or pipeline, PipeForge generates dbt-style artifacts.
+
+Typical generated artifacts include:
 
 ```text
 source_profile.md
 data_quality_report.md
 relationship_profile.md
 join_quality_report.md
-join_plan.md
-```
-
-The multi-source artifacts are generated only when the selected data product requires joins.
-
-### Business Rule Questions
-
-When business logic is ambiguous, PipeForge pauses the workflow and asks the user for a decision.
-
-Examples:
-
-- how to handle refunds
-- how to handle discounts
-- how to treat unmatched invoices or payments
-- whether to preserve currency or aggregate by currency
-- how to handle duplicate business keys
-
-The answers are stored as structured business rules and used during SQL generation.
-
-### dbt-Style Artifact Generation
-
-PipeForge generates reviewable artifacts such as:
-
-```text
+artifact_plan.json
 business_rules.yml
 business_rules.md
 stg_*.sql
@@ -106,692 +107,731 @@ custom_tests/*.sql
 pipeline_summary.md
 ```
 
-The SQL follows a dbt-style model layering convention:
-
-```text
-staging model
-→ intermediate model
-→ final mart model
-```
-
-### Executable Demo Pipeline
-
-After artifacts are generated, users can open the Pipeline tab and execute the generated SQL into a temporary SQLite demo mart.
-
-The Pipeline tab supports:
-
-- visual SQL lineage
-- SQL model nodes
-- dependency lines
-- Run Pipeline / Run Again
-- per-node SQL preview
-- per-node table preview
-- per-node CSV download
-- ZIP download for all materialized tables
-
-The demo mart is reset for each pipeline execution.
-
-### Database Map
-
-The Database tab visualizes the current demo database schema.
-
-It displays:
-
-- source tables
-- table roles
-- primary/foreign key information
-- available metrics and dimensions
-- configured relationships
-- table details and column metadata
+The generated pipeline can then be reviewed and executed from the frontend.
 
 ---
 
-## Tech Stack
+### 4. Human-in-the-loop business clarification
 
-### Frontend
+When the user request contains ambiguous business logic, PipeForge asks a structured clarification question instead of guessing.
 
-- React
-- TypeScript
-- Vite
-- CSS
+Example:
 
-### Backend
+```text
+We need MRR by customer segment, but we are not sure how refunds and discounts should be handled.
+```
 
-- Python
-- FastAPI
-- SQLite
-- Pydantic-style data structures
-- OpenHands/LLM-based artifact generation
+PipeForge may ask:
 
-### Data Layer
+```text
+How should refunds and discounts be handled in the monthly revenue data product?
+```
 
-- SQLite demo database
-- Source contracts
-- Semantic metadata
-- Data product contracts
-- dbt-style generated SQL
+Example options:
+
+```text
+Report gross MRR only and show adjustments separately
+Report net MRR after discounts and refunds
+Report both gross MRR and net MRR with adjustment breakdown
+```
+
+The selected answer is stored as a business rule and used by downstream generation.
+
+---
+
+### 5. Metadata-grounded generation
+
+PipeForge does not rely only on natural language prompts. It uses metadata contracts to constrain the system.
+
+The backend loads:
+
+```text
+Source contracts
+Column definitions
+Semantic metrics
+Semantic dimensions
+Relationships
+Data product contracts
+Known limitations
+```
+
+This allows the LLM and agents to work within known schema boundaries instead of inventing unavailable tables or columns.
+
+---
+
+### 6. Source profiling and validation
+
+Before generating artifacts, PipeForge profiles selected tables using code/tools.
+
+Profiling may include:
+
+```text
+row counts
+null rates
+duplicate keys
+distinct values
+date/month ranges
+sample values
+relationship validity
+join quality
+```
+
+Generated artifacts are then validated by code for:
+
+```text
+expected files
+safe SQL
+valid YAML
+allowed source references
+allowed model references
+known source/column usage
+month-key handling
+```
+
+---
+
+### 7. Bounded OpenHands-based artifact generation
+
+PipeForge uses bounded agent-style tasks for generation.
+
+Specialized generation tasks include:
+
+```text
+model-builder
+test-writer
+doc-writer
+```
+
+Each task receives:
+
+```text
+expected files
+allowed sources
+artifact plan
+source profile
+business rules
+validation context
+```
+
+The system avoids unrestricted agent loops by using clear task scopes, expected outputs, validation, and targeted repair.
+
+---
+
+### 8. Real-time frontend trace
+
+The frontend shows the workflow as it happens.
+
+Main UI areas:
+
+```text
+Request console
+Execution trace
+Artifact viewer
+Database map
+Pipeline execution panel
+Logs
+```
+
+The backend streams normalized events such as:
+
+```text
+session_started
+agent_started
+tool_started
+ask_user
+ask_user_answered
+artifact_created
+agent_completed
+final_message
+done
+```
+
+This makes the full pipeline transparent and reviewable.
+
+---
+
+## Demo Data Model
+
+PipeForge currently uses a simplified Stripe-style demo database.
+
+### `dim_customers`
+
+```text
+customer_id
+customer_name
+customer_segment
+```
+
+### `dim_plans`
+
+```text
+plan_id
+plan_name
+```
+
+### `fact_subscriptions`
+
+```text
+subscription_id
+customer_id
+plan_id
+mrr_amount
+```
+
+### `stripe_invoices`
+
+```text
+invoice_id
+subscription_id
+invoice_month
+invoice_amount
+discount_amount
+```
+
+### `stripe_payments`
+
+```text
+payment_id
+invoice_id
+payment_month
+successful_amount
+refund_amount
+```
+
+The database is intentionally compact so the demo can focus on metadata-driven planning, LLM orchestration, pipeline generation, validation, and reviewability.
+
+---
+
+## Example Prompts
+
+### Out-of-scope request
+
+```text
+Who won the football match yesterday?
+```
+
+Expected behavior:
+
+```text
+Returns out-of-scope response.
+Does not generate SQL.
+Does not generate pipeline artifacts.
+```
+
+---
+
+### Direct analytics request
+
+```text
+Who is the customer with highest MRR?
+```
+
+Expected behavior:
+
+```text
+Generates and executes SQL using fact_subscriptions and dim_customers.
+Returns the top customer by total MRR.
+```
+
+---
+
+### Ambiguous analytics request
+
+```text
+Show me revenue for May 2026.
+```
+
+Expected behavior:
+
+```text
+Asks which revenue definition should be used:
+billed revenue, collected revenue, gross MRR, or net MRR.
+```
+
+---
+
+### Simple pipeline request
+
+```text
+Create a monthly billed revenue pipeline from Stripe invoices for the analytics team.
+```
+
+Expected behavior:
+
+```text
+Generates a pipeline/data product draft using invoice data.
+Creates SQL models, tests, and documentation.
+```
+
+---
+
+### Human-in-the-loop data product request
+
+```text
+Our finance team needs a trusted monthly revenue dataset from Stripe for a board dashboard. We need MRR by customer segment, but we are not sure how refunds and discounts should be handled. Can you prepare this as a data product draft for our analytics team?
+```
+
+Expected behavior:
+
+```text
+Asks how refunds and discounts should be handled.
+Uses the user answer to generate business rules.
+Builds a monthly revenue data product draft.
+Generates staging, intermediate, mart, test, and documentation artifacts.
+```
 
 ---
 
 ## Architecture
 
+PipeForge is built as a full-stack application.
+
 ```text
-User
-  ↓
-React Frontend
-  ↓
-FastAPI Backend
-  ↓
-Workflow Runner
-  ↓
-Metadata / Source / Data Product Selectors
-  ↓
-Source Profiling and Quality Checks
-  ↓
-Business Rule Resolution
-  ↓
-OpenHands / LLM Artifact Generation
-  ↓
-Artifact Store
-  ↓
-Pipeline Executor
-  ↓
-Temporary SQLite Demo Mart
+Frontend: React + Vite + TypeScript
+Backend: FastAPI + Python
+Database: SQLite demo database
+LLM layer: LiteLLM-compatible client
+Agent execution: OpenHands-based bounded artifact generation
+Deployment: Docker / Hugging Face Spaces
+```
+
+High-level runtime architecture:
+
+```text
+User request
+   |
+   v
+FastAPI backend
+   |
+   v
+Metadata context builder
+   |
+   v
+LLM request planner
+   |
+   +-------------------------+
+   |                         |
+   v                         v
+Direct analytics         Data product generation
+   |                         |
+   v                         v
+SQL planner              Source inspector
+   |                         |
+   v                         v
+SQL validator            Business decision planner
+   |                         |
+   v                         v
+SQL execution            Artifact planner
+   |                         |
+   v                         v
+Answer artifacts         Model/Test/Doc agents
+                             |
+                             v
+                         Artifact validation
+                             |
+                             v
+                         Targeted repair if needed
+                             |
+                             v
+                         Final artifacts
 ```
 
 ---
 
-## Main User Flow
+## Backend Flow
 
-1. The user enters a business analytics request in the Workflow tab.
-2. The backend starts a PipeForge run.
-3. The Pipeline Architect classifies the request.
-4. PipeForge selects either a source table or a multi-source data product.
-5. The selected source data is profiled.
-6. PipeForge asks business rule questions when required.
-7. The Model Builder generates SQL models.
-8. The Test Writer generates schema and custom test artifacts.
-9. The Documentation Writer generates documentation artifacts.
-10. The Artifacts tab displays generated files.
-11. The user opens the Pipeline tab.
-12. The user runs the generated SQL pipeline.
-13. PipeForge materializes output tables into a temporary demo mart.
-14. The user previews or downloads the generated tables.
+### Step 1 — Load metadata context
+
+The backend reads YAML contracts, semantic metadata, schema definitions, relationships, metrics, dimensions, data products, and known limitations.
+
+### Step 2 — LLM Request Planner
+
+The request planner receives the user question, metadata context, and previous user answers. It returns a structured JSON plan including:
+
+```text
+request_type
+selected_sources
+selected_metrics
+selected_dimensions
+selected_data_product
+clarification_required
+business_interpretation
+assumptions
+warnings
+```
+
+### Step 3 — Code validation
+
+The backend validates the planner output against known metadata.
+
+It rejects unknown sources, metrics, dimensions, or data products.
+
+### Step 4 — Ask user if needed
+
+If the planner marks a business decision as required, the backend streams an `ask_user` event to the frontend.
+
+### Branch A — Direct Analytics
+
+For direct analytics requests, the backend:
+
+```text
+generates SQL
+validates SQL safety
+executes SQL
+returns analytics artifacts
+```
+
+### Branch B — Data Product Generation
+
+For data product requests, the backend:
+
+```text
+loads selected contracts
+profiles real data
+asks for business decisions if needed
+creates artifact_plan.json
+dispatches model/test/doc generation tasks
+validates generated artifacts
+repairs failed artifacts only
+returns final artifacts
+```
+
+### Cross-cutting behavior
+
+Every major step emits structured events to the frontend so the user can inspect the workflow in real time.
 
 ---
 
-## Current Demo Domain
+## Folder Structure
 
-PipeForge currently uses a SaaS/Stripe-style demo finance domain.
-
-Typical supported entities include:
+A simplified overview of the main project structure:
 
 ```text
-customers
-plans
-subscriptions
-invoices
-payments
-```
-
-Typical analytics requests include:
-
-```text
-MRR by customer segment
-monthly revenue by currency
-billing reconciliation
-invoice/payment matching
-collection health
-outstanding invoice amount
-revenue 360
-```
-
----
-
-## Backend Structure
-
-```text
-backend/app/
-  api/
-    routes_artifacts.py
-    routes_database.py
-    routes_health.py
-    routes_pipeline.py
-    routes_runs.py
-
-  core/
-    config.py
-    paths.py
-
-  contracts/
-    sources/
-    semantic/
-    data_products/
-
-  data/
-    seed_demo_db.py
-
-  prompts/
-    model_builder_prompt.txt
-    test_writer_prompt.txt
-    documentation_writer_prompt.txt
-
-  schemas/
-    agents.py
-    run.py
-
-  services/
-    analytics/
-      analytics_query_runner.py
-      direct_answer_formatter.py
-      direct_query_classifier.py
-      semantic_query_parser.py
-      sql_query_planner.py
-      sql_safety_validator.py
-
-    artifacts/
-      artifact_store.py
-
-    database/
-      database_service.py
-      multi_source_profiler.py
-      quality_checker.py
-      schema_inspector.py
-      source_profiler.py
-
-    decisions/
-      answer_queue.py
-      answer_validator.py
-      business_rule_resolver.py
-      question_planner.py
-
-    llm/
-      llm_client.py
-      llm_intent_classifier.py
-      openhands_artifact_generator.py
-      openhands_runner.py
-
-    metadata/
-      contract_loader.py
-      data_product_selector.py
-      database_graph_builder.py
-      domain_relevance_classifier.py
-      join_planner.py
-      relationship_validator.py
-      request_classifier.py
-      semantic_layer_loader.py
-      semantic_metadata_loader.py
-      source_selector.py
-
-    pipeline/
-      dbt_sql_compiler.py
-      pipeline_executor.py
-      pipeline_sql_safety_validator.py
-
-    runtime/
-      event_emitter.py
-      event_store.py
-      run_registry.py
-
-    workflows/
-      pipeforge_workflow_runner.py
-
-  utils/
-    time.py
-
-  main.py
-```
-
----
-
-## Frontend Structure
-
-```text
-frontend/src/
-  api/
-    pipelineApi.ts
-    runsApi.ts
-
-  components/
-    artifacts/
-      ArtifactCard.tsx
-      ArtifactPanel.tsx
-
-    chat/
-      AskUserCard.tsx
-      ChatPanel.tsx
-
-    database/
-      DatabaseMapPanel.tsx
-
-    pipeline/
-      PipelinePanel.tsx
-
-    status/
-      ActivityTicker.tsx
-      ConnectionBadge.tsx
-      ErrorPanel.tsx
-
-    trace/
-      TraceTreePanel.tsx
-
-  hooks/
-    useRunController.ts
-
-  state/
-
-  types/
-    artifact.ts
-    pipeline.ts
-    run.ts
-
-  App.tsx
-  App.css
-  main.tsx
+.
+├── backend/
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── routes_answers.py
+│   │   │   ├── routes_artifacts.py
+│   │   │   ├── routes_database.py
+│   │   │   ├── routes_health.py
+│   │   │   ├── routes_pipeline.py
+│   │   │   └── routes_runs.py
+│   │   ├── contracts/
+│   │   │   ├── catalog.yml
+│   │   │   ├── dim_customers.yml
+│   │   │   ├── dim_plans.yml
+│   │   │   ├── fact_subscriptions.yml
+│   │   │   ├── stripe_invoices.yml
+│   │   │   ├── stripe_payments.yml
+│   │   │   ├── relationships.yml
+│   │   │   ├── data_products/
+│   │   │   └── semantic/
+│   │   ├── core/
+│   │   ├── prompts/
+│   │   ├── schemas/
+│   │   ├── services/
+│   │   │   ├── analytics/
+│   │   │   ├── artifacts/
+│   │   │   ├── database/
+│   │   │   ├── decisions/
+│   │   │   ├── llm/
+│   │   │   ├── metadata/
+│   │   │   ├── pipeline/
+│   │   │   ├── planning/
+│   │   │   ├── runtime/
+│   │   │   ├── validation/
+│   │   │   └── workflows/
+│   │   ├── utils/
+│   │   └── main.py
+│   ├── data/
+│   │   └── pipeforge_demo.db
+│   └── requirements.txt
+│
+├── frontend/
+│   ├── src/
+│   │   ├── api/
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   ├── state/
+│   │   ├── types/
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   └── package.json
+│
+├── Dockerfile
+├── docker-compose.yml
+├── README.md
+└── .dockerignore
 ```
 
 ---
 
 ## Important Backend Modules
 
-### Workflow Runner
+### `backend/app/services/workflows/pipeforge_workflow_runner.py`
+
+Main workflow orchestrator.
+
+It controls the end-to-end run lifecycle, including request planning, direct analytics, data product generation, profiling, artifact generation, validation, and final response.
+
+### `backend/app/services/planning/`
+
+Contains LLM and deterministic planning components:
 
 ```text
-backend/app/services/workflows/pipeforge_workflow_runner.py
+llm_request_planner.py
+llm_direct_query_planner.py
+llm_business_decision_planner.py
+llm_artifact_planner.py
+request_plan_validator.py
+direct_query_validator.py
+artifact_plan_validator.py
+planner_repair.py
+metadata_context_builder.py
+data_product_plan_builder.py
 ```
 
-Controls the end-to-end PipeForge workflow.
+### `backend/app/services/database/`
 
-Responsibilities:
+Contains schema inspection, source profiling, data quality checks, and multi-source profiling logic.
 
-- start a run
-- classify the request
-- route to direct analytics, single-source generation, or multi-source generation
-- call source profilers
-- manage business rule questions
-- call artifact generators
-- emit workflow events
-- mark run status
+### `backend/app/services/llm/`
 
-### Source Profiling
+Contains the LLM client and OpenHands-based artifact generation logic.
 
-```text
-backend/app/services/database/source_profiler.py
-backend/app/services/database/multi_source_profiler.py
-backend/app/services/database/quality_checker.py
-backend/app/services/database/schema_inspector.py
-```
+### `backend/app/services/artifacts/`
 
-Responsible for reading the demo database, inspecting selected tables, and producing source/data quality context.
+Stores and validates generated artifacts.
 
-### Metadata and Routing
+### `backend/app/services/pipeline/`
 
-```text
-backend/app/services/metadata/domain_relevance_classifier.py
-backend/app/services/metadata/request_classifier.py
-backend/app/services/metadata/source_selector.py
-backend/app/services/metadata/data_product_selector.py
-backend/app/services/metadata/semantic_metadata_loader.py
-backend/app/services/metadata/semantic_layer_loader.py
-```
+Compiles and executes generated SQL pipeline artifacts.
 
-Responsible for determining whether a user request is relevant, what type of workflow should run, and which source/data product should be selected.
+### `backend/app/services/runtime/`
 
-### Business Rules
-
-```text
-backend/app/services/decisions/question_planner.py
-backend/app/services/decisions/answer_validator.py
-backend/app/services/decisions/business_rule_resolver.py
-backend/app/services/decisions/answer_queue.py
-```
-
-Responsible for identifying ambiguous business rules, asking questions, validating answers, and turning decisions into structured artifacts.
-
-### Artifact Generation
-
-```text
-backend/app/services/llm/openhands_artifact_generator.py
-backend/app/services/llm/openhands_runner.py
-```
-
-Responsible for generating SQL, YAML, and Markdown artifacts using the provided context and prompt templates.
-
-### Artifact Storage
-
-```text
-backend/app/services/artifacts/artifact_store.py
-```
-
-Stores generated artifacts and makes them available to the frontend.
-
-### Pipeline Execution
-
-```text
-backend/app/services/pipeline/dbt_sql_compiler.py
-backend/app/services/pipeline/pipeline_executor.py
-backend/app/services/pipeline/pipeline_sql_safety_validator.py
-```
-
-Responsible for compiling generated dbt-style SQL to SQLite-compatible SQL, validating SQL safety, and materializing generated models into a temporary demo mart.
-
-### Runtime State
-
-```text
-backend/app/services/runtime/run_registry.py
-backend/app/services/runtime/event_store.py
-backend/app/services/runtime/event_emitter.py
-```
-
-Responsible for storing run state, events, and real-time workflow updates.
+Handles event streaming, event storage, run registry, and flow logging.
 
 ---
 
 ## Important Frontend Modules
 
-### App Shell
+### `frontend/src/App.tsx`
+
+Main application shell and page navigation.
+
+### `frontend/src/api/`
+
+Frontend API clients for:
 
 ```text
-frontend/src/App.tsx
+runs
+answers
+artifacts
+database graph
+pipeline execution
+event stream
 ```
 
-Top-level UI shell.
+### `frontend/src/hooks/useRunController.ts`
 
-Responsibilities:
+Controls run lifecycle state and user actions.
 
-- top navigation
-- workspace routing
-- active page/tab state
-- reset/new run behavior
-- passing run state into panels
+### `frontend/src/hooks/useEventStream.ts`
 
-### Run Controller
+Connects to backend SSE events and streams agent workflow updates.
 
-```text
-frontend/src/hooks/useRunController.ts
-```
+### `frontend/src/state/runReducer.ts`
 
-Responsible for starting runs, handling events, updating frontend run state, and submitting business rule answers.
+Applies backend events to frontend run state.
 
-### Artifact Panel
+### `frontend/src/components/`
+
+Main UI components for:
 
 ```text
-frontend/src/components/artifacts/ArtifactPanel.tsx
-```
-
-Displays generated artifacts.
-
-Features:
-
-- search
-- type filter
-- artifact preview
-- copy full content
-- Test Pipeline button
-
-### Pipeline Panel
-
-```text
-frontend/src/components/pipeline/PipelinePanel.tsx
-```
-
-Visual SQL pipeline execution page.
-
-Features:
-
-- SQL node graph
-- dependency edges
-- zoom and pan
-- run pipeline button
-- SQL preview
-- table preview
-- CSV download
-
-### Database Map
-
-```text
-frontend/src/components/database/DatabaseMapPanel.tsx
-```
-
-Displays the database schema and relationships as an interactive visual map.
-
----
-
-## Generated Artifacts
-
-A typical single-source run may generate:
-
-```text
-source_profile.md
-data_quality_report.md
-business_rules.yml
-business_rules.md
-stg_stripe__payments.sql
-int_payments__revenue_rules.sql
-mart_revenue__monthly_by_segment.sql
-schema.yml
-custom_tests/test_mrr_not_null.sql
-pipeline_summary.md
-```
-
-A typical multi-source run may additionally generate:
-
-```text
-relationship_profile.md
-join_quality_report.md
-join_plan.md
+chat/request console
+execution trace
+artifact viewer
+database map
+pipeline panel
+status and error panels
 ```
 
 ---
 
-## Pipeline Execution Model
+## Running Locally with Docker Compose
 
-The Pipeline tab executes generated SQL artifacts in dependency order.
-
-The executor:
-
-1. collects generated model SQL files
-2. excludes custom tests and direct analytics SQL
-3. extracts `ref()` dependencies
-4. sorts models by dependency
-5. resets the run-specific demo mart
-6. attaches the source SQLite database
-7. compiles dbt-style SQL to SQLite SQL
-8. validates SQL safety
-9. creates one table per generated model
-10. exposes table previews and CSV downloads
-
-Example model order:
-
-```text
-stg_stripe__payments
-→ int_payments__revenue_rules
-→ mart_revenue__monthly_by_segment
-```
-
----
-
-## SQL Generation Rules
-
-Generated model SQL should follow these rules:
-
-- use only available source tables
-- use `{{ source(...) }}` for raw source tables
-- use `{{ ref(...) }}` for generated model dependencies
-- use SQLite-compatible SQL
-- produce one SELECT/WITH statement per model
-- avoid DDL/DML statements
-- avoid unsupported warehouse-specific syntax
-- do not invent external lookup tables
-- preserve currency grouping unless a currency conversion source exists
-
----
-
-## Running the Project
-
-From the project root:
+The easiest way to run the app locally is:
 
 ```bash
-docker compose up
+docker compose up --build
 ```
 
-Rebuild backend:
-
-```bash
-docker compose build --no-cache backend
-```
-
-Rebuild frontend:
-
-```bash
-docker compose build --no-cache frontend
-```
-
-Rebuild both services:
-
-```bash
-docker compose down
-docker compose build --no-cache backend frontend
-docker compose up
-```
-
-The frontend is usually available at:
+Then open:
 
 ```text
 http://localhost:5173
 ```
 
-The backend is usually available at:
+Local development uses:
 
 ```text
-http://localhost:8000
+Frontend: http://localhost:5173
+Backend:  http://localhost:8000
 ```
 
 ---
 
-## Seeding the Demo Database
+## Running Locally with Single Docker Container
 
-If the database needs to be reset or reseeded:
+The repository also supports a production-style single-container build.
+
+Build:
 
 ```bash
-docker compose exec -T backend python -m app.data.seed_demo_db
+docker build -t pipeforge-hf .
+```
+
+Run:
+
+```bash
+docker run --rm -p 7860:7860 \
+  -e APP_ENV=production \
+  -e PORT=7860 \
+  -e BACKEND_PORT=7860 \
+  -e LLM_API_KEY="your_api_key_here" \
+  -e LLM_MODEL="gpt-5.1-codex-mini" \
+  -e LLM_BASE_URL="https://opencode.ai/zen/v1" \
+  -e OPENHANDS_MAX_CONCURRENCY=1 \
+  -e OPENHANDS_TASK_DELAY_SECONDS=0 \
+  -e OPENHANDS_TIMEOUT_SECONDS=300 \
+  -e OPENHANDS_REPAIR_ATTEMPTS=1 \
+  -e OPENHANDS_WORKSPACE_DIR="/app/workspace" \
+  -e OPENHANDS_SUPPRESS_BANNER=1 \
+  -e DATABASE_URL="sqlite:////app/data/pipeforge_demo.db" \
+  -e CORS_ORIGINS="*" \
+  -e USE_LLM_QUESTION_PLANNER=1 \
+  -e QUESTION_PLANNER_MAX_MUST_ANSWER=3 \
+  pipeforge-hf
+```
+
+Then open:
+
+```text
+http://localhost:7860
 ```
 
 ---
 
-## Basic Usage
+## Environment Variables
 
-1. Start the app with Docker Compose.
-2. Open the frontend in the browser.
-3. Enter a business analytics request.
-4. Resolve any business rule questions.
-5. Review generated artifacts.
-6. Click **Test pipeline** from the Artifacts tab or open the Pipeline tab.
-7. Click **Run pipeline**.
-8. Preview generated output tables.
-9. Download CSV outputs if needed.
+Create local `.env` files for development, but do not commit real secrets.
 
----
+Important backend variables:
 
-## Example Prompts
+```env
+APP_ENV=development
+BACKEND_PORT=8000
 
-### Single-source revenue dataset
+LLM_API_KEY=your_api_key_here
+LLM_MODEL=gpt-5.1-codex-mini
+LLM_BASE_URL=https://opencode.ai/zen/v1
 
-```text
-Create a trusted monthly revenue dataset from Stripe payments.
-We need MRR by customer segment and currency.
-We are not sure how refunds and discounts should be handled.
-Prepare this as a data product draft for the analytics team.
+OPENHANDS_MAX_CONCURRENCY=1
+OPENHANDS_TASK_DELAY_SECONDS=0
+OPENHANDS_TIMEOUT_SECONDS=300
+OPENHANDS_REPAIR_ATTEMPTS=1
+OPENHANDS_WORKSPACE_DIR=/app/workspace
+OPENHANDS_SUPPRESS_BANNER=1
+
+DATABASE_URL=sqlite:////app/data/pipeforge_demo.db
+
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+
+USE_LLM_QUESTION_PLANNER=1
+QUESTION_PLANNER_MAX_MUST_ANSWER=3
 ```
 
-### Invoice amount quality summary
+For production-style single-container deployment, the frontend should use same-origin API paths.
+
+In the current setup:
 
 ```text
-Create a dbt-style data product from stripe_invoices only.
-I want an invoice amount quality summary that calculates minimum invoice amount,
-maximum invoice amount, average invoice amount, invoice count, and total billed amount by currency.
-Generate reviewable SQL models and documentation.
+API_BASE = ""
 ```
 
-### Billing reconciliation
-
-```text
-Create a dbt-style billing reconciliation data product that joins stripe_invoices and stripe_payments by invoice_id.
-Compare billed invoice revenue with collected payment revenue, identify invoices without matching payments,
-identify partial payments and overpayments, and produce a monthly reconciliation mart by customer_segment and currency.
-```
-
-### Revenue 360
-
-```text
-Create a revenue 360 data product that combines customers, subscriptions, plans, invoices, and payments.
-Build a monthly mart with billed revenue, collected revenue, MRR, customer segment, country, industry,
-plan name, product family, and currency.
-```
-
----
-
-## API Areas
-
-Main backend API areas include:
+and frontend API calls use paths such as:
 
 ```text
 /api/runs
-/api/artifacts
-/api/database
-/api/pipeline
-/api/health
-```
-
-The exact route implementations are located in:
-
-```text
-backend/app/api/
+/api/database/graph
+/api/runs/{runId}/events
 ```
 
 ---
 
-## Development Notes
+## Deployment Notes
 
-The backend service paths are centralized through:
+The live demo is deployed as a Docker-based Hugging Face Space.
 
-```text
-backend/app/core/paths.py
-```
-
-Use this module for app-level paths such as:
+Deployment approach:
 
 ```text
-contracts
-semantic contracts
-prompts
+Build React frontend into static files
+Copy frontend build into backend image
+Run FastAPI on port 7860
+Serve both API routes and React frontend from one container
 ```
 
-Avoid calculating app root paths manually inside service files.
+The backend serves:
+
+```text
+/api/...        backend API
+/assets/...     frontend assets
+/               React app
+/{path}         React route fallback
+```
 
 ---
 
-## Project Status
+## Validation and Safety
 
-PipeForge is currently a local demo/prototype for transparent AI-assisted data product generation and execution.
+PipeForge includes deterministic validation layers to reduce hallucinated or unsafe outputs.
 
-Current strengths:
+Validation includes:
 
-- business request to artifact generation
-- source profiling
-- business-rule clarification
-- SQL/test/docs generation
-- visual database map
-- visual executable pipeline
-- temporary demo mart execution
+```text
+Planner output schema validation
+Known source/metric/dimension validation
+Read-only SQL validation
+Allowed source/ref validation
+Generated artifact file validation
+YAML parsing
+Month-key handling checks
+Pipeline execution checks
+```
 
-Current limitations:
+The system is designed to reject or repair generated artifacts that reference unavailable sources, unavailable columns, unsafe SQL, or invalid model dependencies.
 
-- SQLite demo execution is not a full dbt runtime
-- generated SQL is constrained to SQLite-compatible syntax
-- production warehouse integrations are not included
-- long-running workflow persistence is limited to current demo state
-- multi-user execution isolation is not production-grade
+---
+
+## Known Constraints
+
+This is a compact demo system with a simplified SQLite database.
+
+Current constraints:
+
+```text
+No currency conversion
+No FX tables
+No subscription status column
+No payment status column
+No external warehouse connection
+No persistent production database
+```
+
+The simplified database is intentional so the focus remains on LLM planning, metadata grounding, human-in-the-loop decisions, artifact generation, and validation.
 
 ---
 
