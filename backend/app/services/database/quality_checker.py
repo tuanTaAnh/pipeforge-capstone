@@ -549,15 +549,6 @@ def _check_business_rule_triggers(
         )
     )
 
-    findings.extend(
-        _check_multi_currency_needed(
-            safe_table=safe_table,
-            contract=contract,
-            contract_columns=contract_columns,
-            actual_columns=actual_columns,
-            total_rows=total_rows,
-        )
-    )
 
     return findings
 
@@ -633,40 +624,35 @@ def _check_refund_handling_needed(
     if not isinstance(refund_rule, dict):
         return []
 
-    status_value = refund_rule.get("required_when_status_present")
+    positive_column = refund_rule.get("required_when_positive_column_present")
+    if positive_column and positive_column in actual_columns:
+        safe_column = quote_identifier(str(positive_column))
+        row = fetch_one(
+            f"""
+            SELECT COUNT(*) AS positive_count
+            FROM {safe_table}
+            WHERE COALESCE({safe_column}, 0) > 0
+            """
+        )
+        positive_count = int(row["positive_count"]) if row else 0
+        if positive_count > 0:
+            return [
+                {
+                    "id": "issue_refund_handling_needed",
+                    "type": "business_rule_needed",
+                    "severity": refund_rule.get("severity", "must_answer"),
+                    "column": str(positive_column),
+                    "message": f"{positive_column} is positive in {positive_count} payment row(s).",
+                    "evidence": {
+                        "positive_column": str(positive_column),
+                        "affected_rows": positive_count,
+                        "total_rows": total_rows,
+                    },
+                    "affects": refund_rule.get("affects", ["metric_logic", "sql_model", "documentation"]),
+                }
+            ]
 
-    if not status_value or "status" not in actual_columns:
-        return []
-
-    row = fetch_one(
-        f"""
-        SELECT COUNT(*) AS status_count
-        FROM {safe_table}
-        WHERE status = ?
-        """,
-        (status_value,),
-    )
-
-    status_count = int(row["status_count"]) if row else 0
-
-    if status_count == 0:
-        return []
-
-    return [
-        {
-            "id": "issue_refund_handling_needed",
-            "type": "business_rule_needed",
-            "severity": refund_rule.get("severity", "must_answer"),
-            "column": "status",
-            "message": f"status contains {status_count} {status_value} payment row(s).",
-            "evidence": {
-                "status_value": status_value,
-                "affected_rows": status_count,
-                "total_rows": total_rows,
-            },
-            "affects": refund_rule.get("affects", ["metric_logic", "sql_model", "documentation"]),
-        }
-    ]
+    return []
 
 
 def _check_multi_currency_needed(
@@ -676,57 +662,8 @@ def _check_multi_currency_needed(
     actual_columns: dict[str, dict[str, Any]],
     total_rows: int,
 ) -> list[dict[str, Any]]:
-    business_rules = contract.get("business_rules", {})
-    currency_rule = business_rules.get("currency_handling", {})
-
-    if not isinstance(currency_rule, dict):
-        return []
-
-    if not currency_rule.get("ask_when_multiple_valid_currencies", False):
-        return []
-
-    if "currency" not in actual_columns:
-        return []
-
-    valid_values = contract_columns.get("currency", {}).get("valid_values")
-
-    if not isinstance(valid_values, list) or not valid_values:
-        return []
-
-    placeholders = ", ".join("?" for _ in valid_values)
-
-    rows = fetch_all(
-        f"""
-        SELECT currency, COUNT(*) AS row_count
-        FROM {safe_table}
-        WHERE currency IS NOT NULL
-          AND currency IN ({placeholders})
-        GROUP BY currency
-        ORDER BY row_count DESC
-        """,
-        tuple(valid_values),
-    )
-
-    values = [row["currency"] for row in rows]
-
-    if len(values) <= 1:
-        return []
-
-    return [
-        {
-            "id": "issue_multi_currency",
-            "type": "business_rule_needed",
-            "severity": currency_rule.get("severity", "must_answer"),
-            "column": "currency",
-            "message": f"Source contains multiple valid currencies: {', '.join(values)}.",
-            "evidence": {
-                "currencies": rows,
-                "total_rows": total_rows,
-                "excluded_invalid_values": True,
-            },
-            "affects": currency_rule.get("affects", ["metric_logic", "sql_model", "documentation"]),
-        }
-    ]
+    # The simplified demo database intentionally has no currency column.
+    return []
 
 
 def _normalize_contract_type(raw_type: str) -> str:
@@ -745,10 +682,10 @@ def _normalize_contract_type(raw_type: str) -> str:
 
 
 def _default_affects_for_column(column_name: str) -> list[str]:
-    if column_name in {"amount", "currency", "status", "paid_at", "refunded_at", "discount_amount"}:
+    if column_name in {"amount", "successful_amount", "discount_amount", "refund_amount", "invoice_amount", "mrr_amount"}:
         return ["metric_logic", "sql_model", "data_tests"]
 
-    if column_name in {"payment_id", "customer_id"}:
+    if column_name in {"payment_id", "customer_id", "subscription_id", "invoice_id", "plan_id"}:
         return ["sql_model", "data_tests"]
 
     return ["data_tests", "documentation"]

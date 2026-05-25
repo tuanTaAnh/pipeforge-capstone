@@ -27,11 +27,9 @@ def format_direct_answer(
         first_row = rows[0]
         metric_value = first_row.get(metric_name)
         label = _best_label(first_row, dimension_name)
-        currency = first_row.get("currency")
-        currency_text = f" {currency}" if currency else ""
         lines.append(
             f"The top {dimension_name or 'group'} for **{metric_name}** is **{label}** "
-            f"with **{_format_number(metric_value)}{currency_text}**."
+            f"with **{_format_number(metric_value)}**."
         )
     elif len(rows) == 1:
         row = rows[0]
@@ -88,11 +86,9 @@ def format_chat_answer(
         first_row = rows[0]
         metric_value = first_row.get(metric_name)
         label = _best_label(first_row, dimension_name)
-        currency = first_row.get("currency")
-        currency_text = f" {currency}" if currency else ""
         answer = (
             f"The top {dimension_name or 'group'} for {metric_name} is {label}, "
-            f"with {_format_number(metric_value)}{currency_text}."
+            f"with {_format_number(metric_value)}."
         )
     elif len(rows) == 1:
         row = rows[0]

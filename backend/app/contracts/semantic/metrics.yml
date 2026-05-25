@@ -1,177 +1,154 @@
 version: 1
 
 metrics:
-  billed_revenue:
-    label: Billed Revenue
-    description: Revenue billed through invoices before collection reconciliation.
-    business_terms:
-      - billed revenue
-      - invoice revenue
-      - invoiced revenue
-      - billed amount
-      - invoice amount
-    generic_terms:
-      - revenue
-    ambiguity_group: revenue
-    base_source: stripe_invoices
-    value_expression: invoice_amount
-    aggregate_expression: sum(invoice_amount)
-    date_column: issued_at
-    default_filters:
-      - status in ('open', 'paid')
-      - invoice_amount > 0
-    currency_column: currency
-    default_time_phrase: last_month
-    default_dimensions:
-      - customer
-      - customer_segment
-      - country
-      - industry
-      - currency
-    assumptions:
-      - Billed revenue means sum(stripe_invoices.invoice_amount).
-      - Date filtering uses stripe_invoices.issued_at.
-      - Only open and paid invoices are included by default.
-      - Void, uncollectible, invalid, and negative invoices are excluded by default.
-      - No FX conversion is applied.
-
-  collected_revenue:
-    label: Collected Revenue
-    description: Cash/payment revenue collected through successful payments.
-    business_terms:
-      - collected revenue
-      - payment revenue
-      - collected payments
-      - cash collected
-      - paid revenue
-    generic_terms:
-      - revenue
-    ambiguity_group: revenue
-    base_source: stripe_payments
-    value_expression: amount
-    aggregate_expression: sum(amount)
-    date_column: paid_at
-    default_filters:
-      - status = 'paid'
-      - amount > 0
-      - paid_at is not null
-    currency_column: currency
-    default_time_phrase: last_month
-    default_dimensions:
-      - customer
-      - customer_segment
-      - country
-      - industry
-      - currency
-    assumptions:
-      - Collected revenue means sum(stripe_payments.amount).
-      - Date filtering uses stripe_payments.paid_at.
-      - Only paid payments with positive amount are included by default.
-      - Failed, refunded, invalid, and negative payments are excluded by default.
-      - No FX conversion is applied.
-
   mrr:
-    label: Monthly Recurring Revenue
-    description: Monthly recurring revenue from active subscription records.
-    business_terms:
-      - mrr
-      - monthly recurring revenue
-      - recurring revenue
-      - subscription revenue
-    generic_terms:
-      - revenue
+    label: Gross MRR
+    description: Gross monthly recurring revenue from subscription records.
+    business_terms: [mrr, gross mrr, monthly recurring revenue, recurring revenue, subscription revenue]
+    generic_terms: [revenue]
     ambiguity_group: revenue
     base_source: fact_subscriptions
     value_expression: mrr_amount
     aggregate_expression: sum(mrr_amount)
-    date_column: started_at
-    date_logic: active_during_period
+    date_column: null
     default_filters:
       - mrr_amount > 0
-      - status in ('active', 'past_due', 'trialing')
-    currency_column: currency
-    default_time_phrase: last_month
-    default_dimensions:
-      - customer
-      - customer_segment
-      - country
-      - industry
-      - product_family
-      - plan
-      - currency
+    default_time_phrase: all_time
+    default_dimensions: [customer, customer_name, customer_segment, plan]
     assumptions:
-      - MRR means sum(fact_subscriptions.mrr_amount).
-      - A subscription is included when it is active during the selected period.
-      - Active, past_due, and trialing subscriptions are included by default.
-      - Canceled subscriptions are included only if active during part of the period.
-      - No FX conversion is applied.
+      - Gross MRR means sum(fact_subscriptions.mrr_amount).
+      - All rows in the demo subscription fact are valid for MRR reporting.
+
+  gross_mrr:
+    label: Gross MRR
+    description: Alias of MRR. Gross MRR is the baseline subscription MRR before discounts and refunds.
+    business_terms: [gross mrr, gross monthly recurring revenue]
+    generic_terms: [revenue]
+    ambiguity_group: revenue
+    base_source: fact_subscriptions
+    value_expression: mrr_amount
+    aggregate_expression: sum(mrr_amount)
+    date_column: null
+    default_filters:
+      - mrr_amount > 0
+    default_time_phrase: all_time
+    default_dimensions: [customer, customer_name, customer_segment, plan]
+    assumptions:
+      - Gross MRR means sum(fact_subscriptions.mrr_amount).
+
+  billed_revenue:
+    label: Billed Revenue
+    description: Gross invoice revenue from Stripe invoices.
+    business_terms: [billed revenue, invoice revenue, invoiced revenue, billed amount, invoice amount]
+    generic_terms: [revenue]
+    ambiguity_group: revenue
+    base_source: stripe_invoices
+    value_expression: invoice_amount
+    aggregate_expression: sum(invoice_amount)
+    date_column: invoice_month
+    default_filters:
+      - invoice_amount > 0
+    default_time_phrase: all_time
+    default_dimensions: [invoice_month, customer_segment]
+    assumptions:
+      - Billed revenue means sum(stripe_invoices.invoice_amount).
+      - Invoice month is stored as YYYY-MM.
+
+  collected_revenue:
+    label: Collected Revenue
+    description: Cash collected from successful payment records.
+    business_terms: [collected revenue, payment revenue, collected payments, cash collected, successful payment amount, successful amount]
+    generic_terms: [revenue]
+    ambiguity_group: revenue
+    base_source: stripe_payments
+    value_expression: successful_amount
+    aggregate_expression: sum(successful_amount)
+    date_column: payment_month
+    default_filters:
+      - successful_amount > 0
+    default_time_phrase: all_time
+    default_dimensions: [payment_month, customer_segment]
+    assumptions:
+      - Collected revenue means sum(stripe_payments.successful_amount).
+      - The demo payment table stores successful payments only.
 
   invoice_count:
     label: Invoice Count
-    description: Count of invoices after valid invoice filters.
-    business_terms:
-      - invoice count
-      - number of invoices
-      - how many invoices
+    description: Count of invoices.
+    business_terms: [invoice count, number of invoices, how many invoices]
     base_source: stripe_invoices
     value_expression: invoice_id
     aggregate_expression: count(distinct invoice_id)
-    date_column: issued_at
+    date_column: invoice_month
     default_filters:
-      - status in ('open', 'paid', 'void', 'uncollectible')
       - invoice_id is not null
-    currency_column: currency
-    default_time_phrase: last_month
-    default_dimensions:
-      - customer
-      - customer_segment
-      - country
-      - status
+    default_time_phrase: all_time
+    default_dimensions: [invoice_month, customer_segment]
+
+  discount_amount:
+    label: Discount Amount
+    description: Invoice discount adjustment amount.
+    business_terms: [discount amount, discounts, discount adjustment]
+    base_source: stripe_invoices
+    value_expression: discount_amount
+    aggregate_expression: sum(coalesce(discount_amount, 0))
+    date_column: invoice_month
+    default_filters:
+      - invoice_id is not null
+    default_time_phrase: all_time
+    default_dimensions: [invoice_month, customer_segment]
+
+  refund_amount:
+    label: Refund Amount
+    description: Refund adjustment amount from Stripe payments.
+    business_terms: [refund amount, refunds, refunded payments, refund adjustment]
+    base_source: stripe_payments
+    value_expression: refund_amount
+    aggregate_expression: sum(coalesce(refund_amount, 0))
+    date_column: payment_month
+    default_filters:
+      - refund_amount >= 0
+    default_time_phrase: all_time
+    default_dimensions: [payment_month, customer_segment]
+
+  net_mrr:
+    label: Net MRR
+    description: Gross MRR minus discount and refund adjustments.
+    business_terms: [net mrr, adjusted mrr, mrr after refunds and discounts]
+    generic_terms: [revenue]
+    ambiguity_group: revenue
+    base_source: fact_subscriptions
+    value_expression: net_mrr
+    aggregate_expression: sum(mrr_amount) - sum(coalesce(discount_amount, 0)) - sum(coalesce(refund_amount, 0))
+    default_time_phrase: all_time
+    default_dimensions: [invoice_month, customer_segment]
+    assumptions:
+      - Net MRR requires joining subscriptions to invoices and payments.
+      - The exact refund/discount rule should be confirmed by the user when the request is ambiguous.
 
   outstanding_amount:
     label: Outstanding Invoice Amount
-    description: Billed invoice amount minus collected paid payment amount.
-    business_terms:
-      - outstanding amount
-      - unpaid invoice amount
-      - unpaid amount
-      - accounts receivable amount
-      - ar amount
+    description: Billed invoice amount minus collected successful payment amount.
+    business_terms: [outstanding amount, unpaid invoice amount, unpaid amount, accounts receivable amount, ar amount]
     base_source: stripe_invoices
     value_expression: outstanding_amount
     aggregate_expression: sum(outstanding_amount)
-    date_column: issued_at
-    default_time_phrase: last_month
-    default_dimensions:
-      - customer
-      - customer_segment
-      - country
-      - currency
-    special_plan: invoice_payment_outstanding
+    date_column: invoice_month
+    default_time_phrase: all_time
+    default_dimensions: [invoice_month, customer_segment]
     assumptions:
-      - Outstanding amount means invoice_amount minus paid payments matched by invoice_id.
-      - Date filtering uses stripe_invoices.issued_at.
-      - No FX conversion is applied.
+      - Outstanding amount means invoice_amount minus successful payments matched by invoice_id.
 
   collection_rate:
     label: Collection Rate
-    description: Paid collected payment amount divided by billed invoice amount.
-    business_terms:
-      - collection rate
-      - payment collection rate
-      - cash collection rate
+    description: Successful collected payment amount divided by billed invoice amount.
+    business_terms: [collection rate, payment collection rate, cash collection rate]
     base_source: stripe_invoices
     value_expression: collection_rate
-    aggregate_expression: safe_divide(sum(collected_payment_amount), sum(invoice_amount))
-    date_column: issued_at
-    default_time_phrase: last_month
-    default_dimensions:
-      - customer_segment
-      - country
-      - currency
-    special_plan: invoice_payment_collection_rate
+    aggregate_expression: sum(successful_amount) / nullif(sum(invoice_amount), 0)
+    date_column: invoice_month
+    default_time_phrase: all_time
+    default_dimensions: [invoice_month, customer_segment]
     assumptions:
-      - Collection rate means collected paid payments divided by billed invoice amount.
-      - Invoice date filtering uses stripe_invoices.issued_at.
+      - Collection rate compares successful payment amount with billed invoice amount.
       - Payments are matched by invoice_id.
-      - No FX conversion is applied.

@@ -1,190 +1,68 @@
 source:
   name: stripe_invoices
   dbt_source: "source('stripe', 'invoices')"
-  description: "Raw Stripe invoices source used for billing, invoice revenue, subscription billing, and accounts receivable analytics."
+  description: "Minimal Stripe invoice table for billed revenue, invoice month, and discounts."
   owner: "Finance Analytics"
-  aliases:
-    - stripe invoices
-    - invoices
-    - invoice data
-    - invoice revenue
-    - billing
-    - billing dashboard
-    - accounts receivable
-    - invoice analytics
-    - billed revenue
-    - overdue invoices
-    - unpaid invoices
+  aliases: [stripe invoices, invoices, invoice data, billed revenue, discounts, invoice month]
 
 business_context:
-  data_product_goal: "Build a trusted monthly invoice revenue data product for a billing dashboard."
-  final_mart: "mart_billing__monthly_invoice_revenue_by_segment"
-  metric_name: "monthly_invoice_revenue"
-  grain:
-    - invoice_month
-    - customer_segment
-    - currency
-  primary_metric_dimensions:
-    - customer_segment
-    - currency
-    - subscription_id
-  keywords:
-    - invoices
-    - invoice revenue
-    - billing
-    - accounts receivable
-    - finance
-    - stripe
+  data_product_goal: "Provide invoice-level billed revenue and discount context."
+  final_mart: "mart_billing__monthly_invoice_revenue"
+  metric_name: "billed_revenue"
+  grain: [invoice_id]
+  primary_metric_dimensions: [invoice_month]
+  keywords: [invoice, billing, billed revenue, discounts, invoice month]
   notes:
-    - "Invoice logic must be reviewable by analytics engineers."
-    - "Business decisions should be persisted into business_rules.yml."
-    - "Invoices can join to subscriptions through subscription_id and to payments through invoice_id."
+    - "discount_amount may be null; business rule should define whether null means zero discount."
+    - "Customer attributes are reached through subscription -> customer joins."
+    - "invoice_month is a month key stored as text in YYYY-MM format, not a full date or timestamp."
 
 artifact_plan:
-  package_name: "Stripe Invoice Revenue Data Product Draft"
+  package_name: "Stripe Invoice Data Product Draft"
   source_name: "stripe_invoices"
-  staging_model: "stg_stripe__invoices"
-  intermediate_model: "int_invoices__billing_rules"
-  final_mart_name: "mart_billing__monthly_invoice_revenue_by_segment"
-  model_files:
-    - "stg_stripe__invoices.sql"
-    - "int_invoices__billing_rules.sql"
-    - "mart_billing__monthly_invoice_revenue_by_segment.sql"
-  test_files:
-    - "schema.yml"
-    - "custom_tests/test_monthly_invoice_revenue_not_null.sql"
-  documentation_files:
-    - "pipeline_summary.md"
+  final_mart_name: "mart_billing__monthly_invoice_revenue"
+  model_files: [stg_stripe__invoices.sql]
+  test_files: [schema.yml]
+  documentation_files: [pipeline_summary.md]
 
 columns:
   invoice_id:
     type: text
     primary_key: true
     nullable: false
-    description: "Unique Stripe invoice identifier."
+    description: "Unique invoice identifier."
 
   subscription_id:
     type: text
-    nullable: true
-    description: "Subscription associated with the invoice."
-    relationship_hints:
-      references:
-        source: fact_subscriptions
-        column: subscription_id
-      cardinality: many_to_one_from_invoices_to_subscriptions
-
-  customer_id:
-    type: text
     nullable: false
-    description: "Customer associated with the invoice."
-    relationship_hints:
-      references:
-        source: dim_customers
-        column: customer_id
-      cardinality: many_to_one_from_invoices_to_customers
+    description: "Related subscription identifier."
+
+  invoice_month:
+    type: text
+    logical_type: month
+    format: YYYY-MM
+    sql_handling: preserve_as_text
+    sample_values:
+      - "2026-04"
+      - "2026-05"
+      - "2026-06"
+    nullable: false
+    description: "Invoice reporting month stored as a text month key in YYYY-MM format."
+    modeling_notes:
+      - "This is not a full date or timestamp."
+      - "Use this value directly for month filtering, grouping, and joins."
+      - "If normalization is needed, use substr(invoice_month, 1, 7)."
+      - "Do not parse this value with date(), datetime(), or strftime() unless a future contract changes sql_handling."
 
   invoice_amount:
     type: real
     nullable: false
-    description: "Gross invoice amount before tax and discount handling."
-    checks:
-      - type: min_value
-        value: 0
-        inclusive: false
-        severity: must_answer
-        affects:
-          - metric_logic
-          - sql_model
-          - data_tests
-
-  currency:
-    type: text
-    nullable: false
-    description: "ISO-style invoice currency code."
-    valid_values:
-      - USD
-      - EUR
-      - GBP
-
-  status:
-    type: text
-    nullable: false
-    description: "Stripe invoice lifecycle status."
-    valid_values:
-      - open
-      - paid
-      - void
-      - uncollectible
-
-  issued_at:
-    type: text
-    nullable: false
-    description: "Timestamp when the invoice was issued."
-
-  due_at:
-    type: text
-    nullable: true
-    description: "Timestamp when the invoice is due."
-
-  paid_at:
-    type: text
-    nullable: true
-    description: "Timestamp when the invoice was paid."
-    checks:
-      - type: required_when
-        column: status
-        equals: paid
-        severity: must_answer
-        affects:
-          - metric_logic
-          - sql_model
-          - data_tests
-
-  customer_segment:
-    type: text
-    nullable: true
-    description: "Business/customer segment used for reporting."
-
-  tax_amount:
-    type: real
-    nullable: true
-    description: "Tax amount applied to the invoice."
-    checks:
-      - type: max_column_value
-        column: invoice_amount
-        severity: optional_review
-        affects:
-          - data_tests
-          - documentation
+    description: "Gross invoice amount before discount handling."
 
   discount_amount:
     type: real
     nullable: true
-    description: "Discount amount applied to the invoice."
+    description: "Discount amount. Null should be interpreted by an explicit business rule."
     business_rules:
-      require_decision_when_null_rate_ge: 0.1
-      decision_reason: "Missing invoice discounts can affect net invoice revenue calculation."
-    checks:
-      - type: max_column_value
-        column: invoice_amount
-        severity: optional_review
-        affects:
-          - data_tests
-          - documentation
-
-business_rules:
-  currency_handling:
-    ask_when_multiple_valid_currencies: true
-    severity: must_answer
-    affects:
-      - metric_logic
-      - sql_model
-      - documentation
-
-  invoice_status_handling:
-    required_when_status_present: uncollectible
-    severity: must_answer
-    affects:
-      - metric_logic
-      - sql_model
-      - documentation
+      require_decision_when_null_rate_ge: 0.10
+      decision_reason: "Missing discounts affect net MRR or net revenue calculations."

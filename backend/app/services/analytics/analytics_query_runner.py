@@ -4,14 +4,12 @@ import json
 from typing import Any
 
 from app.schemas.agents import AgentInfo
-from app.services.decisions.answer_queue import answer_queue
+from app.schemas.llm_plans import RequestPlan
 from app.services.artifacts.artifact_store import artifact_store
 from app.services.database.database_service import fetch_all
-from app.services.analytics.direct_answer_formatter import format_chat_answer, format_direct_answer
+from app.services.planning.llm_direct_query_planner import plan_direct_query_with_llm
 from app.services.runtime.event_emitter import event_emitter
-from app.services.analytics.semantic_query_parser import parse_semantic_query
-from app.services.analytics.sql_query_planner import build_sql_query
-from app.services.analytics.sql_safety_validator import validate_select_sql
+from app.services.runtime.flow_logger import log_step_failure, log_step_start, log_step_success
 
 
 ANALYTICS_AGENT = AgentInfo(
@@ -22,7 +20,14 @@ ANALYTICS_AGENT = AgentInfo(
 )
 
 
-async def run_direct_analytics_query(run_id: str, prompt: str) -> dict[str, Any]:
+async def run_direct_analytics_query(
+    run_id: str,
+    prompt: str,
+    request_plan: RequestPlan,
+    metadata_context: dict[str, Any],
+    previous_user_answers: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    flow_timer = log_step_start(run_id, "5A", "Direct Analytics Flow", {"selected_sources": request_plan.selected_sources, "prompt": prompt})
     await event_emitter.emit(run_id, "sub_agent_started", ANALYTICS_AGENT, {"status": "running"})
     await event_emitter.emit(
         run_id,
@@ -30,51 +35,46 @@ async def run_direct_analytics_query(run_id: str, prompt: str) -> dict[str, Any]
         ANALYTICS_AGENT,
         {
             "text": (
-                "I will resolve business terms through the semantic mapping layer, "
-                "build a safe SQL query, execute it on the demo SQLite database, and return a direct answer."
+                "I will use an LLM direct-query planner with the validated metadata context, "
+                "then validate and execute the resulting read-only SQL."
             )
         },
     )
-
-    semantic_plan = parse_semantic_query(prompt)
-    selected_metric = semantic_plan.metric_name
-
-    if semantic_plan.clarification_required and semantic_plan.clarification_question:
-        answer_payload = await answer_queue.ask_user_decision(
-            run_id=run_id,
-            agent=ANALYTICS_AGENT,
-            question=semantic_plan.clarification_question,
-            validation_error=None,
-        )
-        selected_metric = answer_payload.get("selectedOptionId") or answer_payload.get("selected_option_id")
-        semantic_plan = parse_semantic_query(prompt, forced_metric_name=selected_metric)
 
     await event_emitter.emit(
         run_id,
         "tool_started",
         ANALYTICS_AGENT,
         {
-            "toolCallId": "tool_plan_direct_analytics_sql",
-            "toolName": "plan_direct_analytics_sql",
-            "input": semantic_plan.model_dump(),
+            "toolCallId": "tool_llm_plan_direct_query",
+            "toolName": "llm_plan_direct_query",
+            "input": {
+                "requestPlan": request_plan.model_dump(),
+                "selectedSources": request_plan.selected_sources,
+            },
         },
     )
 
-    sql_plan = build_sql_query(semantic_plan)
-    validate_select_sql(sql_plan["sql"])
+    direct_plan = await plan_direct_query_with_llm(
+        user_question=prompt,
+        request_plan=request_plan,
+        metadata_context=metadata_context,
+        previous_user_answers=previous_user_answers or [],
+        run_id=run_id,
+    )
 
     await event_emitter.emit(
         run_id,
         "tool_completed",
         ANALYTICS_AGENT,
         {
-            "toolCallId": "tool_plan_direct_analytics_sql",
-            "toolName": "plan_direct_analytics_sql",
+            "toolCallId": "tool_llm_plan_direct_query",
+            "toolName": "llm_plan_direct_query",
             "output": {
-                "metric": semantic_plan.metric_name,
-                "dimension": semantic_plan.dimension_name,
-                "timePhrase": semantic_plan.time_phrase,
-                "sql": sql_plan["sql"],
+                "sql": direct_plan.sql,
+                "businessInterpretation": direct_plan.business_interpretation,
+                "assumptions": direct_plan.assumptions,
+                "warnings": direct_plan.warnings,
             },
         },
     )
@@ -86,11 +86,17 @@ async def run_direct_analytics_query(run_id: str, prompt: str) -> dict[str, Any]
         {
             "toolCallId": "tool_execute_direct_analytics_sql",
             "toolName": "execute_direct_analytics_sql",
-            "input": {"sql": sql_plan["sql"]},
+            "input": {"sql": direct_plan.sql},
         },
     )
 
-    rows = fetch_all(sql_plan["sql"])
+    execution_timer = log_step_start(run_id, "6A", "Execute validated direct SQL", {"sql_preview": direct_plan.sql[:800]})
+    try:
+        rows = fetch_all(direct_plan.sql)
+        log_step_success(run_id, "6A", "Execute validated direct SQL", started_at=execution_timer, details={"row_count": len(rows), "preview_rows": rows[:5]})
+    except Exception as exc:
+        log_step_failure(run_id, "6A", "Execute validated direct SQL", started_at=execution_timer, error=exc, details={"sql_preview": direct_plan.sql[:1200]})
+        raise
 
     await event_emitter.emit(
         run_id,
@@ -103,16 +109,23 @@ async def run_direct_analytics_query(run_id: str, prompt: str) -> dict[str, Any]
         },
     )
 
-    semantic_plan_json = json.dumps(semantic_plan.model_dump(), ensure_ascii=False, indent=2, default=str)
+    semantic_artifact = {
+        "prompt": prompt,
+        "request_plan": request_plan.model_dump(),
+        "direct_query_plan": direct_plan.model_dump(),
+    }
+    semantic_plan_json = json.dumps(semantic_artifact, ensure_ascii=False, indent=2, default=str)
     result_json = json.dumps(rows, ensure_ascii=False, indent=2, default=str)
-    answer_markdown = format_direct_answer(prompt, semantic_plan.model_dump(), sql_plan, rows)
+    answer_markdown = _format_direct_answer_markdown(prompt, request_plan, direct_plan, rows)
+
+    artifact_timer = log_step_start(run_id, "7A", "Return direct answer and analytics artifacts", {"row_count": len(rows)})
 
     await artifact_store.write_artifact(run_id, ANALYTICS_AGENT, "semantic_query_plan.json", semantic_plan_json, "json")
-    await artifact_store.write_artifact(run_id, ANALYTICS_AGENT, "analytics_query.sql", sql_plan["sql"], "sql")
+    await artifact_store.write_artifact(run_id, ANALYTICS_AGENT, "analytics_query.sql", direct_plan.sql, "sql")
     await artifact_store.write_artifact(run_id, ANALYTICS_AGENT, "analytics_result.json", result_json, "json")
     await artifact_store.write_artifact(run_id, ANALYTICS_AGENT, "analytics_answer.md", answer_markdown, "markdown")
 
-    chat_answer = format_chat_answer(semantic_plan.model_dump(), sql_plan, rows)
+    chat_answer = _format_chat_answer(request_plan, direct_plan, rows)
 
     await event_emitter.emit(
         run_id,
@@ -127,10 +140,98 @@ async def run_direct_analytics_query(run_id: str, prompt: str) -> dict[str, Any]
         {"status": "completed", "summary": "Direct analytics answer completed."},
     )
 
+    log_step_success(run_id, "7A", "Return direct answer and analytics artifacts", started_at=artifact_timer, details={"artifacts": ["semantic_query_plan.json", "analytics_query.sql", "analytics_result.json", "analytics_answer.md"], "chat_answer_preview": chat_answer[:500]})
+    log_step_success(run_id, "5A", "Direct Analytics Flow", started_at=flow_timer, details={"row_count": len(rows)})
+
     return {
-        "semantic_plan": semantic_plan.model_dump(),
-        "sql_plan": sql_plan,
+        "semantic_plan": semantic_artifact,
+        "sql": direct_plan.sql,
         "rows": rows,
         "chat_answer": chat_answer,
         "answer_markdown": answer_markdown,
     }
+
+
+def _format_chat_answer(request_plan: RequestPlan, direct_plan, rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        base = "No matching rows were found for the validated query."
+    elif len(rows) <= 5:
+        base = _rows_to_business_text(rows)
+    else:
+        base = f"The query returned {len(rows)} rows. See analytics_result.json for the full table. Preview: {_rows_to_business_text(rows[:5])}"
+
+    interpretation = direct_plan.business_interpretation or request_plan.business_interpretation
+    parts = []
+    if interpretation:
+        parts.append(interpretation)
+    parts.append(base)
+    if direct_plan.warnings:
+        parts.append("Warnings: " + "; ".join(direct_plan.warnings))
+    parts.append("I saved the SQL, result rows, semantic plan, and full explanation as artifacts.")
+    return "\n\n".join(parts)
+
+
+def _format_direct_answer_markdown(prompt: str, request_plan: RequestPlan, direct_plan, rows: list[dict[str, Any]]) -> str:
+    lines = [
+        "# Direct Analytics Answer",
+        "",
+        f"**Question:** {prompt}",
+        "",
+        "## Business interpretation",
+        "",
+        direct_plan.business_interpretation or request_plan.business_interpretation or "No business interpretation provided.",
+        "",
+        "## Result rows",
+        "",
+        "```json",
+        json.dumps(rows, ensure_ascii=False, indent=2, default=str),
+        "```",
+        "",
+        "## Assumptions",
+        "",
+    ]
+    assumptions = [*request_plan.assumptions, *direct_plan.assumptions]
+    if assumptions:
+        lines.extend(f"- {item}" for item in assumptions)
+    else:
+        lines.append("- No explicit assumptions returned by the planner.")
+
+    if direct_plan.warnings or request_plan.warnings:
+        lines.extend(["", "## Warnings", ""])
+        lines.extend(f"- {item}" for item in [*request_plan.warnings, *direct_plan.warnings])
+
+    lines.extend(["", "## SQL used", "", "```sql", direct_plan.sql, "```", ""])
+    return "\n".join(lines).strip() + "\n"
+
+
+def _rows_to_business_text(rows: list[dict[str, Any]]) -> str:
+    fragments: list[str] = []
+    for row in rows:
+        label = _row_label(row)
+        values = []
+        for key, value in row.items():
+            if key == label[0]:
+                continue
+            values.append(f"{key}: {_format_value(value)}")
+        if label[1]:
+            fragments.append(f"{label[1]} — " + ", ".join(values))
+        else:
+            fragments.append(", ".join(values))
+    return "; ".join(fragments)
+
+
+def _row_label(row: dict[str, Any]) -> tuple[str | None, str | None]:
+    for key in ["customer_name", "customer_id", "customer_segment", "plan_name", "plan_id", "invoice_month", "payment_month", "month", "revenue_month"]:
+        if row.get(key) not in {None, ""}:
+            return key, str(row[key])
+    return None, None
+
+
+def _format_value(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, int):
+        return f"{value:,}"
+    if isinstance(value, float):
+        return f"{value:,.2f}"
+    return str(value)

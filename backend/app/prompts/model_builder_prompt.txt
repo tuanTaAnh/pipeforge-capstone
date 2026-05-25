@@ -9,6 +9,12 @@ Inputs you will receive:
 Artifact plan:
 {{ARTIFACT_PLAN_CONTEXT}}
 
+Run-level source and column validation context:
+{{ALLOWED_SOURCE_CONTEXT}}
+
+Task scope:
+{{TASK_SCOPE_CONTEXT}}
+
 Source profile, source contract, data quality report, relationship context, and join plan if available:
 {{SOURCE_PROFILE_CONTEXT}}
 
@@ -38,7 +44,7 @@ Strict source whitelist requirements:
 2. Do not reference any source() table that is not explicitly present in the provided context.
 3. Do not invent new source namespaces.
 4. Do not invent lookup tables.
-5. Do not invent FX/exchange-rate tables.
+5. Do not invent FX/exchange-rate tables or currency columns.
 6. Do not invent calendar/date spine tables.
 7. Do not invent customer, plan, product, geography, or mapping dimensions unless they are explicitly listed as available sources.
 8. Do not use source('fx', 'fx_rates'), source('exchange', 'rates'), source('calendar', 'dates'), source('dim', ...), or any similar lookup source unless that exact source is explicitly present in the input context.
@@ -47,14 +53,13 @@ Strict source whitelist requirements:
 11. If the context provides multiple sources, use only those exact sources.
 12. If a calculation would normally require a missing lookup table, do not invent one. Keep the calculation within the available columns and add a concise SQL comment explaining the assumption.
 
-Currency handling requirements:
+Simplified demo data rules:
 
-1. Do not convert currencies unless an explicit FX/exchange-rate source is present in the provided context.
-2. If the request asks for revenue or MRR and the available source has multiple currencies but no FX source, preserve currency as a grouping dimension.
-3. If no FX source is provided, the correct safe behavior is to aggregate by currency, not to convert all amounts to USD.
-4. Do not create or reference fx_rates, exchange_rates, currency_rates, dim_fx_rates, or any similar table unless it is explicitly provided.
-5. If the user did not request currency conversion, do not add currency conversion logic.
-6. If a board dashboard request mentions revenue but does not specify currency conversion, keep the currency column and group by currency when appropriate.
+1. The demo database has no currency column and no FX conversion logic.
+2. Do not add currency grouping, FX conversion, exchange-rate tables, or currency assumptions.
+3. Use stripe_payments.successful_amount as the collected successful payment amount.
+4. Use fact_subscriptions.mrr_amount as the source of truth for gross MRR.
+5. Use stripe_invoices.discount_amount and stripe_payments.refund_amount for adjustment logic when requested.
 
 dbt macro requirements:
 
@@ -81,9 +86,7 @@ The generated SQL must be executable by a lightweight SQLite demo pipeline after
 
 Use SQLite-compatible syntax only.
 
-Allowed examples:
-- date(column_name, 'start of month')
-- strftime('%Y-%m', column_name)
+Allowed SQLite constructs:
 - CASE WHEN ... THEN ... ELSE ... END
 - COALESCE(column_name, 0)
 - CAST(column_name AS REAL)
@@ -91,6 +94,19 @@ Allowed examples:
 - standard WITH common table expressions
 - standard GROUP BY
 - standard LEFT JOIN / INNER JOIN
+- substr(column_name, 1, 7) for text month-key normalization only when needed
+
+Date, time, and month-key handling requirements:
+
+1. Respect each column's metadata.
+2. Do not infer that a text column is a full SQL date just because its name contains "date", "month", or "time".
+3. If a column metadata says logical_type = month and format = YYYY-MM, treat it as a month key, not a full date or timestamp.
+4. If a column metadata says sql_handling = preserve_as_text, preserve the column value as text in staging models.
+5. Do not parse, cast, or transform month-key columns with date(), datetime(), or strftime() unless the source contract explicitly says the column is a full date/timestamp and sql_handling permits date parsing.
+6. For text month keys in YYYY-MM format, use the original value directly for filtering, grouping, joining, and final mart grain.
+7. If normalization is needed for a month key, use substr(month_column, 1, 7), not date() or strftime().
+8. Do not create a calendar/date spine table unless explicitly provided as an allowed source.
+9. Do not generate date ranges or date spine joins unless the artifact plan explicitly requires them and the source exists.
 
 Do not use unsupported warehouse-specific syntax:
 - DATE_TRUNC
@@ -111,18 +127,19 @@ Do not use unsupported warehouse-specific syntax:
 Model layering requirements:
 
 1. Staging models should select, rename, normalize, deduplicate, and filter obvious contract violations from raw sources.
-2. Intermediate models should apply business rules and reusable calculations.
-3. Final mart models should aggregate or shape data for the requested analytics output.
-4. Use the artifact plan to decide model filenames and intended final mart name.
-5. Use ref() between generated models instead of re-reading the raw source table in every model.
-6. Do not reference a raw source table from intermediate or mart models if a staging model already exists for that source, unless the artifact plan explicitly requires it.
+2. Staging models should preserve contract-defined month keys when sql_handling = preserve_as_text.
+3. Intermediate models should apply business rules and reusable calculations.
+4. Final mart models should aggregate or shape data for the requested analytics output.
+5. Use the artifact plan to decide model filenames and intended final mart name.
+6. Use ref() between generated models instead of re-reading the raw source table in every model.
+7. Do not reference a raw source table from intermediate or mart models if a staging model already exists for that source, unless the artifact plan explicitly requires it.
 
 Business rule requirements:
 
 1. Apply every resolved business rule from business_rules.yml / business_rules.md.
 2. If the user selected a discount handling rule, implement it in the intermediate or final model.
 3. If the user selected a refund handling rule, implement it in the intermediate or final model.
-4. If the user selected currency handling, preserve or aggregate currency according to the rule.
+4. Do not add currency handling; the simplified demo database has no currency column.
 5. Add concise SQL comments explaining important business rule logic.
 6. Do not ignore unresolved data quality findings that affect SQL model behavior.
 7. Do not invent a business rule that requires unavailable data.
@@ -131,21 +148,23 @@ Source and column requirements:
 
 1. Use only columns shown in the source profile/source contract/relationship context.
 2. Do not invent columns.
-3. If a requested metric cannot be calculated with available columns, use the closest supported metric and document the assumption in a SQL comment.
-4. Do not reference custom tests or schema.yml from model SQL.
-5. Do not reference output tables that are not listed as generated model files unless they are valid source() tables explicitly provided by the context.
-6. Do not reference any table name directly unless it is a generated model through ref() or an allowed raw source through source().
-7. Do not reference a physical table such as stripe_payments directly. Use {{ source(...) }} for raw source tables and {{ ref(...) }} for generated models.
+3. Read column type, logical_type, format, sql_handling, sample_values, and modeling_notes when present.
+4. If the source contract provides sample_values, use them to infer safe SQL handling.
+5. If a requested metric cannot be calculated with available columns, use the closest supported metric and document the assumption in a SQL comment.
+6. Do not reference custom tests or schema.yml from model SQL.
+7. Do not reference output tables that are not listed as generated model files unless they are valid source() tables explicitly provided by the context.
+8. Do not reference any table name directly unless it is a generated model through ref() or an allowed raw source through source().
+9. Do not reference a physical table such as stripe_payments directly. Use {{ source(...) }} for raw source tables and {{ ref(...) }} for generated models.
 
 Metric and aggregation requirements:
 
 1. Match the user request as closely as possible.
 2. If the request asks for min/max/average/count/total, include those measures in the final mart.
 3. If the request asks for group by dimensions, include those dimensions in the final mart GROUP BY.
-4. If the request asks for a month or time range, use the requested date column from the context and SQLite-compatible date filtering.
+4. If the request asks for a month or time range, use the requested month/date column from the context and respect that column's metadata format.
 5. If the request asks for MRR or recurring revenue, use the source contract/business context and resolved rules to determine the supported calculation.
 6. If the request is about invoice revenue, prefer invoice amount fields.
-7. If the request is about collected revenue, prefer payment amount fields.
+7. If the request is about collected revenue, prefer successful payment amount fields.
 8. If the request is about reconciliation, compare billed and collected amounts using configured relationships.
 9. If exact MRR cannot be calculated from the available data, create a supported monthly recurring revenue proxy from available recurring/payment/invoice fields and add a concise SQL comment describing the assumption.
 
@@ -158,6 +177,7 @@ File content quality:
 5. Do not use SELECT * in final mart models.
 6. Do not include markdown headings inside SQL files.
 7. Do not include prose outside SQL comments.
+8. Keep comments concise and relevant to business rules or known assumptions.
 
 Validation before finishing:
 
@@ -171,4 +191,5 @@ Before you finish, verify that:
 7. No model contains unsupported SQLite syntax.
 8. No model contains CREATE, INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, ATTACH, DETACH, PRAGMA, VACUUM, or REPLACE.
 9. No model references any source() that is not explicitly present in the provided context.
-10. No model references fx_rates, exchange_rates, currency_rates, dim_fx_rates, calendar tables, or lookup tables unless they are explicitly present in the provided context.
+10. No model references fx_rates, exchange_rates, currency_rates, dim_fx_rates, currency columns, calendar tables, or lookup tables unless they are explicitly present in the provided context.
+11. No model parses a text month key with date(), datetime(), or strftime() when that column metadata says logical_type = month, format = YYYY-MM, or sql_handling = preserve_as_text.

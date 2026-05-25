@@ -355,8 +355,6 @@ def _relationship_specific_metrics(
         partial_count = payment_coverage["partial_count"]
         overpaid_count = payment_coverage["overpaid_count"]
         fully_paid_count = payment_coverage["fully_paid_count"]
-        currency_mismatch_count = payment_coverage["currency_mismatch_count"]
-
         if partial_count > 0 or overpaid_count > 0:
             findings.append(
                 {
@@ -376,24 +374,11 @@ def _relationship_specific_metrics(
                 }
             )
 
-        if currency_mismatch_count > 0:
-            findings.append(
-                {
-                    "id": "issue_invoice_payment_currency_mismatch",
-                    "type": "currency_mismatch",
-                    "severity": "must_answer",
-                    "message": f"{currency_mismatch_count} joined invoice/payment row(s) have mismatched currencies.",
-                    "evidence": {"currency_mismatch_count": currency_mismatch_count},
-                    "affects": ["join_logic", "metric_logic", "sql_model"],
-                }
-            )
-
         return {
             "summary": {
                 "partial_count": partial_count,
                 "overpaid_count": overpaid_count,
                 "fully_paid_count": fully_paid_count,
-                "currency_mismatch_count": currency_mismatch_count,
             },
             "findings": findings,
         }
@@ -508,25 +493,23 @@ def _invoice_payment_coverage() -> dict[str, int]:
         WITH payments_by_invoice AS (
             SELECT
                 invoice_id,
-                currency,
-                SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS collected_payment_amount,
+                SUM(successful_amount) AS collected_payment_amount,
                 COUNT(*) AS payment_count
             FROM stripe_payments
             WHERE invoice_id IS NOT NULL
-            GROUP BY invoice_id, currency
+            GROUP BY invoice_id
         ),
         invoice_coverage AS (
             SELECT
                 i.invoice_id,
                 i.invoice_amount,
-                i.currency AS invoice_currency,
                 COALESCE(SUM(p.collected_payment_amount), 0) AS collected_payment_amount,
                 COALESCE(SUM(p.payment_count), 0) AS payment_count
             FROM stripe_invoices AS i
             LEFT JOIN payments_by_invoice AS p
               ON p.invoice_id = i.invoice_id
             WHERE i.invoice_amount > 0
-            GROUP BY i.invoice_id, i.invoice_amount, i.currency
+            GROUP BY i.invoice_id, i.invoice_amount
         )
         SELECT
             SUM(
@@ -555,24 +538,10 @@ def _invoice_payment_coverage() -> dict[str, int]:
         """
     )
 
-    currency_row = fetch_one(
-        """
-        SELECT COUNT(*) AS count
-        FROM stripe_invoices AS i
-        JOIN stripe_payments AS p
-          ON p.invoice_id = i.invoice_id
-        WHERE p.invoice_id IS NOT NULL
-          AND i.currency IS NOT NULL
-          AND p.currency IS NOT NULL
-          AND i.currency != p.currency
-        """
-    )
-
     row = rows[0] if rows else {}
 
     return {
         "partial_count": int(row.get("partial_count") or 0),
         "overpaid_count": int(row.get("overpaid_count") or 0),
         "fully_paid_count": int(row.get("fully_paid_count") or 0),
-        "currency_mismatch_count": int(currency_row["count"]) if currency_row else 0,
     }

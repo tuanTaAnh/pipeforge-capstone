@@ -1,6 +1,6 @@
 You are repairing a previous PipeForge OpenHands run.
 
-The previous attempt did not create all required files.
+The previous attempt did not create all required files or generated files that failed validation.
 
 Current workspace absolute path:
 {{WORKSPACE_ROOT}}
@@ -14,6 +14,12 @@ Exact absolute paths that must be created now:
 Artifact plan:
 {{ARTIFACT_PLAN_CONTEXT}}
 
+Run-level source and column validation context:
+{{ALLOWED_SOURCE_CONTEXT}}
+
+Task scope:
+{{TASK_SCOPE_CONTEXT}}
+
 Source profile(s), source contract(s), data quality report(s), relationship profile, and join plan when present:
 {{SOURCE_PROFILE_CONTEXT}}
 
@@ -24,7 +30,7 @@ Original task prompt:
 {{ORIGINAL_TASK_PROMPT}}
 
 Repair objective:
-Create only the missing or empty files listed above.
+Create only the missing or empty files listed above, or repair only the files explicitly identified as failed by the task context.
 
 Critical repair rules:
 - Do not inspect the filesystem.
@@ -34,9 +40,75 @@ Critical repair rules:
 - Do not use relative paths such as ".", "..", "./", or "../".
 - Use file_editor create only.
 - Use the exact absolute file paths listed above.
-- Create only the missing or empty files.
+- Create only the missing, empty, or explicitly failed files.
 - Do not create README, notes, alternative files, or extra outputs.
 - Do not ask follow-up questions.
 - Do not call finish until all missing or empty files have been created.
 - A text-only answer is invalid.
 - The backend will reject the run if any required file is still missing.
+
+Simplified demo data rules:
+- The current source database has no currency column.
+- Do not add currency or FX assumptions unless a provided file explicitly contains that column.
+- Use stripe_payments.successful_amount as the collected successful payment amount.
+- Use fact_subscriptions.mrr_amount as the source of truth for gross MRR.
+- Use stripe_invoices.discount_amount and stripe_payments.refund_amount for adjustment logic when requested.
+
+Metadata-driven column handling rules:
+- Respect each column's source contract metadata.
+- Read column type, logical_type, format, sql_handling, sample_values, and modeling_notes when present.
+- If a column metadata says logical_type = month and format = YYYY-MM, treat it as a month key, not a full date or timestamp.
+- If a column metadata says sql_handling = preserve_as_text, preserve the value as text.
+- Do not parse, cast, or transform month-key columns with date(), datetime(), or strftime() unless the source contract explicitly says the column is a full date/timestamp and sql_handling permits date parsing.
+- For text month keys in YYYY-MM format, use the original value directly for filtering, grouping, joining, and final mart grain.
+- If normalization is needed for a month key, use substr(month_column, 1, 7), not date() or strftime().
+- Do not create calendar/date spine tables unless explicitly provided as allowed sources.
+
+Targeted month-key repair guidance:
+- If validation says a month-key column may become NULL because of date(), datetime(), or strftime(), replace that transformation with the original column value or substr(column, 1, 7).
+- Do not replace a valid YYYY-MM month key with a NULL-producing date expression.
+- Do not change unrelated SQL when repairing this issue.
+
+Source and dependency rules:
+- Use only raw source refs explicitly listed in the run-level validation context.
+- Use {{ source(...) }} for raw source tables.
+- Use {{ ref(...) }} for generated model dependencies.
+- Do not use bare source(...) or bare ref(...).
+- Do not infer allowed sources from previously generated files.
+- Do not invent source refs, lookup tables, calendar tables, FX tables, or mapping tables.
+
+SQL rules:
+- Every SQL model must be a single SELECT-style model.
+- SQL must start with SELECT or WITH after optional comments.
+- Do not generate CREATE TABLE, CREATE VIEW, INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, ATTACH, DETACH, PRAGMA, VACUUM, or REPLACE statements.
+- Use SQLite-compatible SQL only.
+- Do not use DATE_TRUNC, QUALIFY, SAFE_CAST, TRY_CAST, EXTRACT, SELECT * EXCEPT, ARRAY, STRUCT, UNNEST, or warehouse-specific syntax.
+- Use COALESCE for nullable adjustment fields when computing totals.
+- Keep SQL simple, explicit, and deterministic.
+
+Staging model rules:
+- Staging models should select only columns that exist in the raw source.
+- Staging models should not join other tables.
+- Staging models should not perform business aggregations.
+- Staging models should preserve contract-defined month keys when sql_handling = preserve_as_text.
+- Staging models may cast numeric amounts to REAL when appropriate.
+- Staging models may coalesce adjustment columns when business rules require it.
+
+Expected staging source mapping:
+- stg_demo__customers.sql -> source('demo', 'dim_customers')
+- stg_demo__plans.sql -> source('demo', 'dim_plans')
+- stg_demo__subscriptions.sql -> source('demo', 'fact_subscriptions')
+- stg_stripe__invoices.sql -> source('stripe', 'invoices')
+- stg_stripe__payments.sql -> source('stripe', 'payments')
+
+Mart model rules:
+- The final mart for subscription_revenue_360 should be mart_subscription__revenue_360_monthly.
+- The final mart grain should be invoice_month and customer_segment unless the artifact plan says otherwise.
+- Expected business fields include gross_mrr, discount_amount, refund_amount, and net_mrr when the resolved rule asks for gross and net MRR.
+- Treat null discount_amount and refund_amount as zero when calculating net metrics.
+
+Output behavior:
+- For a single failed file, create or return the complete corrected file content.
+- For multiple failed files, repair only those files.
+- Do not include prose before or after code unless the target file itself is prose.
+- Do not include unrelated files.

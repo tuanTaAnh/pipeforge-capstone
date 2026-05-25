@@ -4,8 +4,8 @@ database:
   name: pipeforge_demo
   domain: subscription_finance_analytics
   description: >
-    Demo SaaS subscription finance database with customer and plan dimensions,
-    subscription facts, invoice facts, and payment facts.
+    Minimal SaaS subscription finance demo database for agent transparency demos.
+    It uses five small tables with intentionally simple business logic and no currency conversion complexity.
 
 sources:
   - name: dim_customers
@@ -15,26 +15,9 @@ sources:
     source_role: dimension
     grain: one row per customer
     primary_key: customer_id
-    important_columns:
-      - customer_id
-      - customer_name
-      - customer_segment
-      - country
-      - industry
-      - account_tier
-      - signup_date
-      - is_active
-    business_meaning: >
-      Customer dimension used to enrich revenue, billing, subscription, and collection
-      analytics with customer segment, country, industry, and account tier.
-    keywords:
-      - customer
-      - customers
-      - customer segment
-      - country
-      - industry
-      - account tier
-      - dimension
+    important_columns: [customer_id, customer_name, customer_segment]
+    business_meaning: Customer identity and segment attributes for revenue reporting.
+    keywords: [customer, customers, account, customer name, segment, customer segment]
 
   - name: dim_plans
     contract_path: dim_plans.yml
@@ -43,115 +26,39 @@ sources:
     source_role: dimension
     grain: one row per subscription plan
     primary_key: plan_id
-    important_columns:
-      - plan_id
-      - plan_name
-      - product_family
-      - billing_interval
-      - list_price
-      - currency
-      - is_active
-    business_meaning: >
-      Plan dimension used to enrich subscription and revenue analytics with product
-      family, billing interval, list price, and plan currency.
-    keywords:
-      - plan
-      - plans
-      - pricing
-      - product family
-      - billing interval
-      - dimension
+    important_columns: [plan_id, plan_name]
+    business_meaning: Plan names for subscription reporting.
+    keywords: [plan, plans, subscription plan, plan name]
 
   - name: fact_subscriptions
     contract_path: fact_subscriptions.yml
     table_name: fact_subscriptions
     business_entity: subscription
     source_role: fact
-    grain: one row per subscription lifecycle record
+    grain: one row per subscription
     primary_key: subscription_id
-    important_columns:
-      - subscription_id
-      - customer_id
-      - plan_id
-      - status
-      - started_at
-      - ended_at
-      - mrr_amount
-      - currency
-      - quantity
-    business_meaning: >
-      Subscription lifecycle fact used for MRR, churn, expansion, status,
-      customer-plan joins, and subscription-level revenue analysis.
-    keywords:
-      - subscription
-      - subscriptions
-      - mrr
-      - recurring revenue
-      - churn
-      - active subscriptions
-      - fact
+    important_columns: [subscription_id, customer_id, plan_id, mrr_amount]
+    business_meaning: Subscription source of truth for gross MRR.
+    keywords: [subscription, subscriptions, mrr, gross mrr, recurring revenue]
 
   - name: stripe_invoices
     contract_path: stripe_invoices.yml
     table_name: stripe_invoices
     business_entity: invoice
     source_role: fact
-    grain: one row per Stripe invoice
+    grain: one row per invoice
     primary_key: invoice_id
-    important_columns:
-      - invoice_id
-      - subscription_id
-      - customer_id
-      - invoice_amount
-      - currency
-      - status
-      - issued_at
-      - due_at
-      - paid_at
-      - customer_segment
-      - tax_amount
-      - discount_amount
-    business_meaning: >
-      Invoice-level fact for billed revenue, accounts receivable,
-      invoice status handling, discounts, taxes, and billing dashboards.
-    keywords:
-      - invoice
-      - invoices
-      - billing
-      - billed revenue
-      - accounts receivable
-      - overdue invoices
-      - unpaid invoices
-      - fact
+    important_columns: [invoice_id, subscription_id, invoice_month, invoice_amount, discount_amount]
+    business_meaning: Stripe invoice source for billed revenue, invoice month, and discount adjustments.
+    keywords: [invoice, invoices, billing, billed revenue, discounts, discount amount, invoice month]
 
   - name: stripe_payments
     contract_path: stripe_payments.yml
     table_name: stripe_payments
     business_entity: payment
     source_role: fact
-    grain: one row per Stripe payment event
+    grain: one row per successful payment
     primary_key: payment_id
-    important_columns:
-      - payment_id
-      - invoice_id
-      - subscription_id
-      - customer_id
-      - amount
-      - currency
-      - status
-      - paid_at
-      - plan_id
-      - customer_segment
-      - discount_amount
-      - refunded_at
-    business_meaning: >
-      Payment-level fact for collected revenue, cash collection, refund handling,
-      and invoice-payment reconciliation.
-    keywords:
-      - payment
-      - payments
-      - collected revenue
-      - cash revenue
-      - refund
-      - collection rate
-      - fact
+    important_columns: [payment_id, invoice_id, payment_month, successful_amount, refund_amount]
+    business_meaning: Stripe payment source for successful collected amounts and refund adjustments.
+    keywords: [payment, payments, collected revenue, successful payments, refund, refund amount, payment month]

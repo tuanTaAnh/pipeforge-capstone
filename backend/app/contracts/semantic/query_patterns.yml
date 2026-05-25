@@ -12,9 +12,10 @@ patterns:
       - generated the highest
       - generated the most
     examples:
+      - Who is the customer with highest MRR?
       - Which customer generated the highest billed revenue last month?
       - Which segment had the highest collected revenue last month?
-      - Top product family by MRR last month.
+      - Top plan by MRR.
 
   aggregate_metric:
     intent: aggregate
@@ -35,7 +36,7 @@ patterns:
       - broken down by
     examples:
       - Show billed revenue by customer segment last month.
-      - MRR by product family last month.
+      - Show MRR by customer segment.
 
   count_records:
     intent: count
@@ -44,4 +45,4 @@ patterns:
       - count
       - number of
     examples:
-      - How many unpaid invoices do we have last month?
+      - How many invoices do we have last month?

@@ -15,6 +15,12 @@ Exact absolute file paths to create:
 Artifact plan:
 {{ARTIFACT_PLAN_CONTEXT}}
 
+Run-level source and column validation context:
+{{ALLOWED_SOURCE_CONTEXT}}
+
+Task scope:
+{{TASK_SCOPE_CONTEXT}}
+
 Source profile(s), source contract(s), data quality report(s), relationship profile, and join plan when present:
 {{SOURCE_PROFILE_CONTEXT}}
 
@@ -52,3 +58,5 @@ Critical execution rules:
 - Do not call finish until all expected files have been created.
 - A text-only answer is invalid.
 - The backend will reject the run if any required file is missing.
+
+Simplified demo rule: The current source database has no currency column. Do not add currency or FX assumptions unless a provided file explicitly contains that column.

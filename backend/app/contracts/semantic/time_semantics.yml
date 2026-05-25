@@ -3,7 +3,8 @@ version: 1
 defaults:
   demo_data_mode:
     use_max_data_date_instead_of_system_date: true
-  default_time_phrase: last_month
+  default_time_phrase: all_time
+  default_month_columns: [invoice_month, payment_month]
 
 time_phrases:
   last_month:

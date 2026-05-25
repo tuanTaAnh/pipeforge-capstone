@@ -20,7 +20,7 @@ def inspect_table_schema(
     row_count_row = fetch_one(f"SELECT COUNT(*) AS row_count FROM {safe_table}")
     row_count = int(row_count_row["row_count"]) if row_count_row else 0
 
-    sample_rows = fetch_all(f"SELECT * FROM {safe_table} LIMIT 5")
+    sample_rows = fetch_all(f"SELECT * FROM {safe_table} LIMIT 2")
 
     dbt_source = get_contract_dbt_source(contract) if contract else "source('stripe', 'payments')"
 
