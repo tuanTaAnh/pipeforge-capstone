@@ -4,6 +4,7 @@ from app.api.routes_answers import router as answers_router
 from app.api.routes_artifacts import router as artifacts_router
 from app.api.routes_database import router as database_router
 from app.api.routes_health import router as health_router
+from app.api.routes_pipeline import router as pipeline_router
 from app.api.routes_runs import router as runs_router
 from app.core.cors import setup_cors
 
@@ -18,6 +19,7 @@ def create_app() -> FastAPI:
     app.include_router(answers_router)
     app.include_router(artifacts_router)
     app.include_router(database_router)
+    app.include_router(pipeline_router)
 
     return app
 

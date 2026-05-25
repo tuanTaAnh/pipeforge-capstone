@@ -24,6 +24,8 @@ class RunRegistry:
             "plannedQuestions": [],
             "currentQuestionIndex": 0,
             "resolvedRules": [],
+            "artifactPlan": {},
+            "pipelineRun": None,
         }
         self.conditions[run_id] = asyncio.Condition()
         self.locks[run_id] = asyncio.Lock()

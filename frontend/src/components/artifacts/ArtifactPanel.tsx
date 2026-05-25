@@ -5,6 +5,7 @@ import { ArtifactCard } from "./ArtifactCard";
 
 type Props = {
   artifacts: Artifact[];
+  onOpenPipeline?: () => void;
 };
 
 type ArtifactLoadError = {
@@ -41,7 +42,20 @@ function getErrorMessage(error: unknown) {
   return String(error);
 }
 
-export function ArtifactPanel({ artifacts }: Props) {
+function isExecutableSqlArtifact(artifact: Artifact) {
+  const normalizedFilename = artifact.filename.replace("\\", "/").toLowerCase();
+
+  return (
+    artifact.type === "sql" &&
+    normalizedFilename.endsWith(".sql") &&
+    !normalizedFilename.startsWith("custom_tests/") &&
+    !normalizedFilename.includes("/custom_tests/") &&
+    !normalizedFilename.split("/").pop()?.startsWith("test_") &&
+    normalizedFilename !== "analytics_query.sql"
+  );
+}
+
+export function ArtifactPanel({ artifacts, onOpenPipeline }: Props) {
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -51,6 +65,10 @@ export function ArtifactPanel({ artifacts }: Props) {
   );
   const [loadingArtifactId, setLoadingArtifactId] = useState<string | null>(null);
   const [artifactLoadError, setArtifactLoadError] = useState<ArtifactLoadError | null>(null);
+
+  const executableSqlCount = useMemo(() => {
+    return artifacts.filter(isExecutableSqlArtifact).length;
+  }, [artifacts]);
 
   const artifactTypes = useMemo(() => {
     return Array.from(new Set(artifacts.map((artifact) => artifact.type)));
@@ -232,7 +250,25 @@ export function ArtifactPanel({ artifacts }: Props) {
           <h2>Artifacts</h2>
         </div>
 
-        <span className="count-pill">{artifacts.length} files</span>
+        <div className="artifact-header-actions">
+          {onOpenPipeline && artifacts.length > 0 && (
+            <button
+              type="button"
+              className="artifact-test-pipeline-button"
+              onClick={onOpenPipeline}
+              disabled={executableSqlCount === 0}
+              title={
+                executableSqlCount > 0
+                  ? "Open the Pipeline tab to test generated SQL artifacts"
+                  : "No executable SQL model artifacts are available yet"
+              }
+            >
+              Test pipeline
+            </button>
+          )}
+
+          <span className="count-pill">{artifacts.length} files</span>
+        </div>
       </div>
 
       {artifacts.length === 0 ? (

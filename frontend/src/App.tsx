@@ -5,6 +5,7 @@ import { ArtifactPanel } from "./components/artifacts/ArtifactPanel";
 import { AskUserCard } from "./components/chat/AskUserCard";
 import { ChatPanel } from "./components/chat/ChatPanel";
 import { DatabaseMapPanel } from "./components/database/DatabaseMapPanel";
+import { PipelinePanel } from "./components/pipeline/PipelinePanel";
 import { ActivityTicker } from "./components/status/ActivityTicker";
 import { ConnectionBadge } from "./components/status/ConnectionBadge";
 import { ErrorPanel } from "./components/status/ErrorPanel";
@@ -12,7 +13,7 @@ import { TraceTreePanel } from "./components/trace/TraceTreePanel";
 import { useRunController } from "./hooks/useRunController";
 import type { AnswerSubmission, RunState, RunStatus } from "./types/run";
 
-type TopLevelPage = "overview" | "workflow" | "database";
+type TopLevelPage = "overview" | "workflow" | "database" | "pipeline";
 type WorkspaceTab = "overview" | "request" | "decision" | "trace" | "artifacts" | "logs";
 
 type WorkspaceTabConfig = {
@@ -367,6 +368,11 @@ function App() {
     setManualPageSelected(true);
   }
 
+  function openPipeline() {
+    setActivePage("pipeline");
+    setManualPageSelected(true);
+  }
+
   function selectTab(tab: WorkspaceTab) {
     setActiveTab(tab);
     setManualTabSelected(true);
@@ -417,7 +423,12 @@ function App() {
         return <TraceTreePanel state={state} onToggleNode={controller.toggleNode} />;
 
       case "artifacts":
-        return <ArtifactPanel artifacts={state.artifacts} />;
+        return (
+            <ArtifactPanel
+              artifacts={state.artifacts}
+              onOpenPipeline={openPipeline}
+            />
+          );
 
       case "logs":
         return (
@@ -475,6 +486,13 @@ function App() {
               onClick={openDatabase}
             >
               Database
+            </button>
+            <button
+              type="button"
+              className={activePage === "pipeline" ? "active" : ""}
+              onClick={openPipeline}
+            >
+              Pipeline
             </button>
             <button
               type="button"
@@ -573,6 +591,14 @@ function App() {
         ) : activePage === "database" ? (
           <main className="database-page">
             <DatabaseMapPanel />
+          </main>
+        ) : activePage === "pipeline" ? (
+          <main className="pipeline-page">
+            <PipelinePanel
+              runId={state.runId}
+              artifacts={state.artifacts}
+              onOpenArtifacts={() => openWorkflow("artifacts")}
+            />
           </main>
         ) : (
           <main className="workflow-page">

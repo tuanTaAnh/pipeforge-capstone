@@ -114,6 +114,7 @@ def _format_clarification_message(routing_classification: dict[str, Any]) -> str
     option_lines = "\n".join(f"- {option}" for option in options)
     return f"{question}\n\nSuggested options:\n{option_lines}"
 
+
 def sub_agent(agent_id: str, name: str) -> AgentInfo:
     return AgentInfo(
         id=agent_id,
@@ -481,7 +482,7 @@ async def doc_writer(
         {
             "text": (
                 "I will use OpenHands SDK to document the selected source, data quality findings, "
-                "artifact plan, resolved business rules, assumptions, and next steps."
+                "artifact plan, resolved business rules, assumptions, generated models, tests, and next steps."
             )
         },
     )
@@ -538,10 +539,50 @@ async def doc_writer(
         agent,
         {
             "status": "completed",
-            "summary": "Generated documentation using OpenHands SDK.",
+            "summary": "Generated final documentation using OpenHands SDK.",
         },
     )
 
+
+async def generate_artifacts_in_review_order(
+    run_id: str,
+    source_profile_context: str,
+    business_rules_context: str,
+    artifact_plan: dict[str, Any],
+) -> None:
+    """
+    Generate artifacts in a deterministic review order.
+
+    The previous implementation used asyncio.gather(), which made Model Builder,
+    Test Writer, and Documentation Writer run in parallel. That allowed
+    Documentation Writer to complete before Test Writer, which was confusing in
+    the UI and made the workflow look logically incorrect.
+
+    This sequence is intentionally ordered:
+    1. Model Builder creates SQL models.
+    2. Test Writer creates schema/custom tests after models exist.
+    3. Documentation Writer creates final documentation after models and tests.
+    """
+    await model_builder(
+        run_id=run_id,
+        source_profile_context=source_profile_context,
+        business_rules_context=business_rules_context,
+        artifact_plan=artifact_plan,
+    )
+
+    await test_writer(
+        run_id=run_id,
+        source_profile_context=source_profile_context,
+        business_rules_context=business_rules_context,
+        artifact_plan=artifact_plan,
+    )
+
+    await doc_writer(
+        run_id=run_id,
+        source_profile_context=source_profile_context,
+        business_rules_context=business_rules_context,
+        artifact_plan=artifact_plan,
+    )
 
 
 def build_multi_source_questions(
@@ -921,18 +962,20 @@ async def run_multi_source_workflow(
             "text": (
                 f"All required reconciliation decisions are resolved. "
                 f"I recorded {len(resolved_rules)} rule(s) in business_rules.yml. "
-                "Now I can generate joined dbt model, test, and documentation artifacts."
+                "Now I will generate joined dbt models first, then tests, then final documentation artifacts."
             )
         },
     )
 
     source_profile_context = inspection["source_profile_context"]
     artifact_plan = inspection["artifact_plan"]
+    registry.runs[run_id]["artifactPlan"] = artifact_plan
 
-    await asyncio.gather(
-        model_builder(run_id, source_profile_context, business_rules_yaml, artifact_plan),
-        test_writer(run_id, source_profile_context, business_rules_yaml, artifact_plan),
-        doc_writer(run_id, source_profile_context, business_rules_yaml, artifact_plan),
+    await generate_artifacts_in_review_order(
+        run_id=run_id,
+        source_profile_context=source_profile_context,
+        business_rules_context=business_rules_yaml,
+        artifact_plan=artifact_plan,
     )
 
     final_mart = artifact_plan.get("final_mart_name", "configured final mart")
@@ -969,8 +1012,8 @@ Generated package:
 Recommended next steps:
 1. Review relationship_profile.md, join_quality_report.md, join_plan.md, and business_rules.yml.
 2. Review the generated dbt SQL/YAML files.
-3. Copy the generated files into your dbt project.
-4. Run dbt build and dbt test.
+3. Open the Pipeline tab and run the generated models into the demo data mart.
+4. Preview the generated mart tables and download CSV/ZIP outputs if needed.
 5. Validate reconciliation results with Finance before connecting to BI.
 """
 
@@ -1001,7 +1044,6 @@ def _json_dumps(value: Any) -> str:
     import json
 
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
-
 
 
 async def run_pipeforge_workflow(run_id: str, prompt: str) -> None:
@@ -1038,8 +1080,8 @@ async def run_pipeforge_workflow(run_id: str, prompt: str) -> None:
         registry.runs[run_id]["domainRelevanceClassification"] = domain_classification
 
         if (
-                domain_classification.get("needs_llm_fallback")
-                and settings.use_llm_intent_classifier
+            domain_classification.get("needs_llm_fallback")
+            and settings.use_llm_intent_classifier
         ):
             llm_classification = await classify_intent_with_llm(
                 prompt=prompt,
@@ -1073,8 +1115,8 @@ async def run_pipeforge_workflow(run_id: str, prompt: str) -> None:
             return
 
         if (
-                routing_classification["relevance"] == "ambiguous_database_request"
-                or routing_classification.get("needs_clarification")
+            routing_classification["relevance"] == "ambiguous_database_request"
+            or routing_classification.get("needs_clarification")
         ):
             await _complete_run_with_message(
                 run_id=run_id,
@@ -1090,8 +1132,8 @@ async def run_pipeforge_workflow(run_id: str, prompt: str) -> None:
         registry.runs[run_id]["directAnalyticsClassification"] = direct_classification
 
         if (
-                direct_classification["is_direct_analytics_question"]
-                or routing_classification.get("intent") == "direct_analytics_question"
+            direct_classification["is_direct_analytics_question"]
+            or routing_classification.get("intent") == "direct_analytics_question"
         ):
             await event_emitter.emit(
                 run_id,
@@ -1169,6 +1211,7 @@ async def run_pipeforge_workflow(run_id: str, prompt: str) -> None:
         source_profile_context = profile["source_profile_context"]
         business_rules_context = business_rules_yaml
         artifact_plan = profile.get("artifact_plan", {})
+        registry.runs[run_id]["artifactPlan"] = artifact_plan
 
         await event_emitter.emit(
             run_id,
@@ -1178,15 +1221,16 @@ async def run_pipeforge_workflow(run_id: str, prompt: str) -> None:
                 "text": (
                     f"All required business questions are resolved. "
                     f"I recorded {len(resolved_rules)} rule(s) in business_rules.yml. "
-                    "Now I can generate model, test, and documentation artifacts."
+                    "Now I will generate model artifacts first, then test artifacts, then final documentation."
                 )
             },
         )
 
-        await asyncio.gather(
-            model_builder(run_id, source_profile_context, business_rules_context, artifact_plan),
-            test_writer(run_id, source_profile_context, business_rules_context, artifact_plan),
-            doc_writer(run_id, source_profile_context, business_rules_context, artifact_plan),
+        await generate_artifacts_in_review_order(
+            run_id=run_id,
+            source_profile_context=source_profile_context,
+            business_rules_context=business_rules_context,
+            artifact_plan=artifact_plan,
         )
 
         final_mart = artifact_plan.get("final_mart_name", "configured final mart")
@@ -1214,8 +1258,8 @@ Generated package:
 Recommended next steps:
 1. Review source_profile.md, data_quality_report.md, and business_rules.yml.
 2. Review the generated dbt SQL/YAML files.
-3. Copy the generated files into your dbt project.
-4. Run dbt build and dbt test.
+3. Open the Pipeline tab and run the generated models into the demo data mart.
+4. Preview the generated mart tables and download CSV/ZIP outputs if needed.
 5. Connect the final mart to your BI dashboard.
 """
 
