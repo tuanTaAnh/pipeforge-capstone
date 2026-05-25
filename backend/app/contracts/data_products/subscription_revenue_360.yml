@@ -4,8 +4,9 @@ data_product:
   name: subscription_revenue_360
   package_name: Subscription Revenue 360 Data Product
   description: >
-    Build a compact board-ready monthly revenue mart with gross MRR, discount and
-    refund adjustments, net MRR, and customer segment breakdowns.
+    Monthly subscription revenue data product for finance and board reporting.
+    It combines customer segments, subscriptions, invoices, discounts, payments,
+    and refunds into a reviewed revenue mart.
 
   aliases:
     - revenue 360
@@ -17,14 +18,14 @@ data_product:
     - gross and net mrr
     - refunds and discounts
 
+  primary_source: fact_subscriptions
+
   sources:
     - dim_customers
     - dim_plans
     - fact_subscriptions
     - stripe_invoices
     - stripe_payments
-
-  primary_source: fact_subscriptions
 
   relationships:
     - customers_to_subscriptions
@@ -37,34 +38,43 @@ data_product:
     - customer_segment
 
   metrics:
-    - name: gross_mrr
-      source: fact_subscriptions.mrr_amount
-      aggregation: sum
-      description: Gross subscription MRR before discounts and refunds.
-    - name: discount_amount
-      source: stripe_invoices.discount_amount
-      aggregation: sum
-      description: Invoice discount adjustment amount.
-    - name: refund_amount
-      source: stripe_payments.refund_amount
-      aggregation: sum
-      description: Payment refund adjustment amount.
-    - name: net_mrr
-      expression: gross_mrr - discount_amount - refund_amount
-      description: Net MRR after selected adjustment handling.
+    - gross_mrr
+    - mrr
+    - discount_amount
+    - refund_amount
+    - net_mrr
+    - billed_revenue
+    - collected_revenue
+
+  dimensions:
+    - invoice_month
+    - customer_segment
+    - customer_name
+    - plan_name
+    - payment_month
 
   business_questions:
     - id: q_refunds_discounts_handling
-      question: Should the board dataset report gross MRR only, net MRR only, or both gross and net MRR with adjustment columns?
+      question: >
+        Should the board dataset report gross MRR only, net MRR only, or both
+        gross and net MRR with adjustment columns?
       priority: must_answer
-      issue_summary: Refunds and discounts change how finance interprets monthly MRR for the board dashboard.
+      issue_summary: >
+        Refunds and discounts change how finance interprets monthly MRR for the
+        board dashboard.
       recommended_option_id: gross_and_net
-      recommendation_reason: Showing gross MRR, net MRR, and adjustment columns gives finance transparency and auditability.
+      recommendation_reason: >
+        Showing gross MRR, net MRR, and adjustment columns gives finance
+        transparency and auditability.
       options:
         - id: gross_only
           label: Report gross MRR only and show adjustments separately
-          resolved_rule: Keep gross MRR unchanged and expose discounts/refunds as separate supporting columns.
-          implementation: Keep gross_mrr from subscriptions and add discount_amount/refund_amount columns without netting them into the primary MRR metric.
+          resolved_rule: >
+            Keep gross MRR unchanged and expose discounts/refunds as separate
+            supporting columns.
+          implementation: >
+            Keep gross_mrr from subscriptions and add discount_amount/refund_amount
+            columns without netting them into the primary MRR metric.
         - id: net_only
           label: Report net MRR after discounts and refunds
           resolved_rule: Net MRR equals gross MRR minus discount and refund adjustments.
@@ -72,7 +82,42 @@ data_product:
         - id: gross_and_net
           label: Report both gross MRR and net MRR with adjustment breakdown
           resolved_rule: Report gross_mrr, discount_amount, refund_amount, and net_mrr together.
-          implementation: Build a mart with gross_mrr, discount_amount, refund_amount, and net_mrr at month/segment grain.
+          implementation: >
+            Build a mart with gross_mrr, discount_amount, refund_amount, and net_mrr
+            at month/segment grain.
+
+  business_rules:
+    default_discount_handling: >
+      Treat null discount_amount values as zero unless the user provides a different rule.
+    default_refund_handling: >
+      Treat null refund_amount values as zero unless the user provides a different rule.
+    recommended_revenue_view: >
+      Report both gross MRR and net MRR with explicit discount and refund adjustment columns.
+
+  metric_definitions:
+    gross_mrr: Sum of fact_subscriptions.mrr_amount at the final mart grain.
+    mrr: Alias for gross_mrr in this simplified demo model.
+    billed_revenue: Sum of stripe_invoices.invoice_amount.
+    discount_amount: Sum of coalesce(stripe_invoices.discount_amount, 0).
+    collected_revenue: Sum of stripe_payments.successful_amount.
+    refund_amount: Sum of coalesce(stripe_payments.refund_amount, 0).
+    net_mrr: gross_mrr minus discount_amount minus refund_amount.
+
+  final_mart:
+    name: mart_subscription__revenue_360_monthly
+    description: >
+      Monthly revenue mart by customer segment with gross MRR, discount adjustments,
+      refund adjustments, and net MRR.
+    grain:
+      - invoice_month
+      - customer_segment
+    fields:
+      - invoice_month
+      - customer_segment
+      - gross_mrr
+      - discount_amount
+      - refund_amount
+      - net_mrr
 
   artifact_plan:
     package_name: Subscription Revenue 360 Data Product
@@ -116,8 +161,25 @@ data_product:
         output_model: stg_stripe__payments
       - id: monthly_adjustments
         type: aggregate
-        description: Aggregate discounts and refunds by subscription and invoice_month before joining to gross MRR.
+        description: Aggregate discounts and refunds by subscription and invoice_month.
+        output_model: int_subscription__mrr_adjustments
       - id: final_mart
         type: aggregate
         output_model: mart_subscription__revenue_360_monthly
-        group_by: [invoice_month, customer_segment]
+        group_by:
+          - invoice_month
+          - customer_segment
+
+  modeling_guidance:
+    - Use fact_subscriptions.mrr_amount as the source of truth for gross MRR.
+    - Join dim_customers to fact_subscriptions using customer_id to report by customer_segment.
+    - Join dim_plans to fact_subscriptions using plan_id only when plan context is needed.
+    - Join fact_subscriptions to stripe_invoices using subscription_id to align invoice_month and billed amounts.
+    - Join stripe_invoices to stripe_payments using invoice_id to include successful collections and refund adjustments.
+    - Treat null discount_amount and refund_amount values as zero in metric calculations.
+    - Do not add currency grouping, FX conversion, subscription status filtering, or payment status filtering.
+
+  known_limitations:
+    - This simplified demo database has no currency column and no FX conversion logic.
+    - This simplified demo database has no subscription status column; all subscription rows are eligible for MRR calculations.
+    - This simplified demo database stores only successful payment amounts in stripe_payments.successful_amount.

@@ -98,4 +98,8 @@ class ArtifactPlan(BaseModel):
     def as_artifact_plan_dict(self) -> dict[str, Any]:
         data = self.model_dump()
         data["source_name"] = data.get("source_name") or (self.selected_sources[0] if self.selected_sources else "llm_selected_sources")
+        # Keep generation_notes backward-compatible on input, but do not write it
+        # into artifact_plan.json. The field made Step 8B verbose and increased
+        # max_output_tokens failures.
+        data.pop("generation_notes", None)
         return data
