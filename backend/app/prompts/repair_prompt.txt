@@ -1,0 +1,42 @@
+You are repairing a previous PipeForge OpenHands run.
+
+The previous attempt did not create all required files.
+
+Current workspace absolute path:
+{{WORKSPACE_ROOT}}
+
+Missing or empty files:
+{{MISSING_FILES}}
+
+Exact absolute paths that must be created now:
+{{MISSING_ABSOLUTE_PATHS}}
+
+Artifact plan:
+{{ARTIFACT_PLAN_CONTEXT}}
+
+Source profile(s), source contract(s), data quality report(s), relationship profile, and join plan when present:
+{{SOURCE_PROFILE_CONTEXT}}
+
+Resolved business rules:
+{{BUSINESS_RULES_CONTEXT}}
+
+Original task prompt:
+{{ORIGINAL_TASK_PROMPT}}
+
+Repair objective:
+Create only the missing or empty files listed above.
+
+Critical repair rules:
+- Do not inspect the filesystem.
+- Do not use file_editor view.
+- Do not search for an existing dbt project.
+- Do not inspect parent folders or sibling folders.
+- Do not use relative paths such as ".", "..", "./", or "../".
+- Use file_editor create only.
+- Use the exact absolute file paths listed above.
+- Create only the missing or empty files.
+- Do not create README, notes, alternative files, or extra outputs.
+- Do not ask follow-up questions.
+- Do not call finish until all missing or empty files have been created.
+- A text-only answer is invalid.
+- The backend will reject the run if any required file is still missing.

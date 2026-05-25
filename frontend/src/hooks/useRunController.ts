@@ -1,11 +1,27 @@
 import { useState } from "react";
 
 import { retryRun, startRun, submitAnswer } from "../api/runsApi";
-import { initialState } from "../state/initialState";
+import { createInitialState, initialState } from "../state/initialState";
 import { applyEvent, toggleNodeExpanded } from "../state/runReducer";
 import type { AgentEvent } from "../types/event";
-import type { RunState } from "../types/run";
+import type { AnswerSubmission, RunState } from "../types/run";
 import { useEventStream } from "./useEventStream";
+
+const DISCONNECTED_MESSAGE = "Event stream disconnected. Reconnecting...";
+
+function appendUniqueError(errors: string[], message: string) {
+  if (errors.includes(message)) return errors;
+  return [...errors, message];
+}
+
+function getSubmissionDisplayText(submission: AnswerSubmission): string {
+  return (
+    submission.answer ||
+    submission.customAnswer ||
+    submission.selectedOptionId ||
+    "Submitted answer"
+  );
+}
 
 export function useRunController() {
   const [state, setState] = useState<RunState>(initialState);
@@ -15,22 +31,38 @@ export function useRunController() {
       setState((previous) => applyEvent(previous, event));
     },
     onDisconnected: () => {
-      setState((previous) => ({
-        ...previous,
-        connected: false,
-        errors: [...previous.errors, "Event stream disconnected. Reconnecting..."]
-      }));
+      setState((previous) => {
+        if (previous.status === "completed" || previous.status === "failed") {
+          return {
+            ...previous,
+            connected: false
+          };
+        }
+
+        return {
+          ...previous,
+          connected: false,
+          errors: appendUniqueError(previous.errors, DISCONNECTED_MESSAGE)
+        };
+      });
     }
   });
+
+  function handleResetRun() {
+    stream.close();
+    setState(createInitialState());
+  }
 
   async function handleStartRun(prompt: string) {
     stream.close();
 
+    const freshState = createInitialState();
+
     setState({
-      ...initialState,
+      ...freshState,
       status: "running",
       chatMessages: [
-        ...initialState.chatMessages,
+        ...freshState.chatMessages,
         {
           id: `user_${Date.now()}`,
           role: "user",
@@ -51,12 +83,15 @@ export function useRunController() {
       setState((previous) => ({
         ...previous,
         status: "failed",
-        errors: [...previous.errors, error instanceof Error ? error.message : String(error)]
+        errors: [
+          ...previous.errors,
+          error instanceof Error ? error.message : String(error)
+        ]
       }));
     }
   }
 
-  async function handleSubmitAnswer(answer: string) {
+  async function handleSubmitAnswer(submission: AnswerSubmission) {
     if (!state.pendingQuestion || !state.runId) return;
 
     const questionId = state.pendingQuestion.questionId;
@@ -68,17 +103,20 @@ export function useRunController() {
         {
           id: `user_answer_${Date.now()}`,
           role: "user",
-          text: answer
+          text: getSubmissionDisplayText(submission)
         }
       ]
     }));
 
     try {
-      await submitAnswer(state.runId, questionId, answer);
+      await submitAnswer(state.runId, questionId, submission);
     } catch (error) {
       setState((previous) => ({
         ...previous,
-        errors: [...previous.errors, error instanceof Error ? error.message : String(error)]
+        errors: [
+          ...previous.errors,
+          error instanceof Error ? error.message : String(error)
+        ]
       }));
     }
   }
@@ -91,7 +129,10 @@ export function useRunController() {
     } catch (error) {
       setState((previous) => ({
         ...previous,
-        errors: [...previous.errors, error instanceof Error ? error.message : String(error)]
+        errors: [
+          ...previous.errors,
+          error instanceof Error ? error.message : String(error)
+        ]
       }));
     }
   }
@@ -105,6 +146,7 @@ export function useRunController() {
     startRun: handleStartRun,
     submitAnswer: handleSubmitAnswer,
     retry: handleRetry,
+    resetRun: handleResetRun,
     toggleNode: handleToggleNode
   };
 }

@@ -1,0 +1,173 @@
+version: 1
+
+data_product:
+  name: subscription_collection_health
+  package_name: Subscription Collection Health Data Product
+  description: >
+    Build a collection health mart for overdue invoices, unpaid invoices,
+    partial payments, overpayments, and collection rate by customer segment and country.
+
+  aliases:
+    - collection health
+    - collection dashboard
+    - accounts receivable health
+    - overdue invoices
+    - unpaid invoices
+    - payment collection rate
+    - partial payments
+    - overpayments
+    - collection rate by customer segment
+    - collection rate by country
+
+  sources:
+    - dim_customers
+    - stripe_invoices
+    - stripe_payments
+
+  primary_source: stripe_invoices
+
+  relationships:
+    - customers_to_invoices
+    - invoices_to_payments_by_invoice_id
+
+  grain:
+    - invoice_month
+    - customer_id
+    - customer_segment
+    - country
+    - currency
+
+  metrics:
+    - name: billed_amount
+      source: stripe_invoices.invoice_amount
+      aggregation: sum
+      description: Total billed amount.
+    - name: collected_payment_amount
+      source: stripe_payments.amount
+      aggregation: sum
+      description: Total collected amount.
+    - name: outstanding_amount
+      expression: billed_amount - collected_payment_amount
+      description: Remaining unpaid amount.
+    - name: collection_rate
+      expression: collected_payment_amount / nullif(billed_amount, 0)
+      description: Collection efficiency.
+    - name: overdue_invoice_count
+      expression: count of open invoices past due date
+      description: Number of overdue open invoices.
+
+  business_questions:
+    - id: q_overdue_invoice_handling
+      question: How should overdue open invoices be classified?
+      priority: must_answer
+      issue_summary: Open invoices past due date affect collection health and accounts receivable reporting.
+      recommended_option_id: classify_overdue
+      recommendation_reason: Classification preserves invoice evidence and makes collection actions measurable.
+      options:
+        - id: classify_overdue
+          label: Classify open past-due invoices as overdue
+          resolved_rule: Open invoices with due_at before the reporting date are classified as overdue.
+          implementation: Add invoice_collection_status with values paid, open_not_due, overdue, void, uncollectible.
+        - id: exclude_overdue_from_collection_rate
+          label: Exclude overdue invoices from collection rate
+          resolved_rule: Exclude overdue open invoices from collection rate but report them separately.
+          implementation: Filter overdue invoices out of collection_rate denominator and create overdue_invoice_count.
+        - id: flag_for_review
+          label: Flag overdue invoices for finance review
+          resolved_rule: Keep overdue invoices and flag them for finance review.
+          implementation: Add requires_finance_review for overdue open invoices.
+
+    - id: q_partial_overpayment_handling
+      question: How should partial payments and overpayments be represented?
+      priority: must_answer
+      issue_summary: Partial payments and overpayments require explicit payment coverage classification.
+      recommended_option_id: classify_payment_status
+      recommendation_reason: Classifying payment coverage preserves all evidence and keeps collection metrics explainable.
+      options:
+        - id: classify_payment_status
+          label: Classify payment coverage
+          resolved_rule: Classify each invoice as unpaid, partially_paid, fully_paid, or overpaid.
+          implementation: Add payment_coverage_status based on collected_payment_amount compared with billed_amount.
+        - id: count_only_fully_paid
+          label: Count only fully paid invoices as collected
+          resolved_rule: Treat partially paid invoices as not collected for collection-rate purposes.
+          implementation: Set collected_invoice_flag only when collected_payment_amount >= billed_amount.
+        - id: flag_partial_and_overpaid
+          label: Flag partial and overpaid invoices for review
+          resolved_rule: Flag partial and overpaid invoices for finance review.
+          implementation: Add requires_finance_review for partial and overpaid invoices.
+
+  artifact_plan:
+    package_name: Subscription Collection Health Data Product
+    source_name: subscription_collection_health
+    staging_model: stg_stripe__invoices
+    intermediate_model: int_billing__collection_health
+    final_mart_name: mart_billing__collection_health_monthly
+    model_files:
+      - stg_demo__customers.sql
+      - stg_stripe__invoices.sql
+      - stg_stripe__payments.sql
+      - int_billing__collection_health.sql
+      - mart_billing__collection_health_monthly.sql
+    test_files:
+      - schema.yml
+      - custom_tests/test_collection_rate_between_0_and_1.sql
+      - custom_tests/test_outstanding_amount_not_null.sql
+    documentation_files:
+      - pipeline_summary.md
+
+  join_plan:
+    steps:
+      - id: stg_customers
+        type: staging
+        source: dim_customers
+        output_model: stg_demo__customers
+        description: Clean customer dimension attributes.
+      - id: stg_invoices
+        type: staging
+        source: stripe_invoices
+        output_model: stg_stripe__invoices
+        description: Clean invoices, derive invoice_month, and classify due dates.
+      - id: stg_payments
+        type: staging
+        source: stripe_payments
+        output_model: stg_stripe__payments
+        description: Clean payments and keep invoice_id.
+      - id: payments_by_invoice
+        type: aggregate
+        input: stg_stripe__payments
+        group_by:
+          - invoice_id
+          - currency
+        metrics:
+          - name: collected_payment_amount
+            expression: "sum(case when status = 'paid' then amount else 0 end)"
+          - name: payment_count
+            expression: "count(*)"
+        description: Aggregate payments by invoice before collection classification.
+      - id: invoices_with_customers_and_payments
+        type: multi_join
+        output_model: int_billing__collection_health
+        base: stg_stripe__invoices
+        joins:
+          - relationship_id: customers_to_invoices
+            left: stg_demo__customers
+            right: stg_stripe__invoices
+            join_type: left
+            direction: dimension_to_fact
+          - relationship_id: invoices_to_payments_by_invoice_id
+            left: stg_stripe__invoices
+            right: payments_by_invoice
+            join_type: left
+            direction: fact_to_fact
+        description: Combine invoices with customer attributes and payment coverage.
+      - id: monthly_collection_health
+        type: aggregate
+        input: int_billing__collection_health
+        group_by:
+          - invoice_month
+          - customer_segment
+          - country
+          - currency
+        output_model: mart_billing__collection_health_monthly
+        description: Build collection health mart by segment, country, and currency.

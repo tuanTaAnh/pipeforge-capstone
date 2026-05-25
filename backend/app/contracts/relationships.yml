@@ -1,0 +1,161 @@
+version: 1
+
+relationships:
+  - id: customers_to_subscriptions
+    left_source: dim_customers
+    right_source: fact_subscriptions
+    left_key: customer_id
+    right_key: customer_id
+    relationship_type: one_to_many
+    recommended_join_type: left
+    business_meaning: >
+      One customer can own zero or more subscriptions. Use this relationship to
+      enrich subscription MRR with segment, country, industry, and account tier.
+    required_for:
+      - subscription_revenue_360
+      - subscription_mrr_by_customer_attributes
+    validation:
+      left_key_unique: true
+      right_key_nullable_allowed: false
+      max_unmatched_left_rate: 0.60
+      max_unmatched_right_rate: 0.05
+    warnings:
+      - Do not join subscriptions to customers without customer_id.
+      - Customer dimension duplicates can duplicate MRR if not deduplicated.
+
+  - id: plans_to_subscriptions
+    left_source: dim_plans
+    right_source: fact_subscriptions
+    left_key: plan_id
+    right_key: plan_id
+    relationship_type: one_to_many
+    recommended_join_type: left
+    business_meaning: >
+      One plan can be used by zero or more subscriptions. Use this relationship
+      to report MRR by product family and billing interval.
+    required_for:
+      - subscription_revenue_360
+      - subscription_mrr_by_product_family
+    validation:
+      left_key_unique: true
+      right_key_nullable_allowed: false
+      max_unmatched_left_rate: 0.80
+      max_unmatched_right_rate: 0.05
+    warnings:
+      - Plan duplicates can duplicate subscription MRR.
+      - Missing plan mappings should be flagged before product-family reporting.
+
+  - id: subscriptions_to_invoices
+    left_source: fact_subscriptions
+    right_source: stripe_invoices
+    left_key: subscription_id
+    right_key: subscription_id
+    relationship_type: one_to_many
+    recommended_join_type: left
+    business_meaning: >
+      One subscription can produce zero or more invoices. Use this relationship
+      to compare subscription MRR with billed invoice revenue.
+    required_for:
+      - subscription_revenue_360
+      - subscription_billed_revenue
+    validation:
+      left_key_unique: true
+      right_key_nullable_allowed: true
+      max_unmatched_left_rate: 0.40
+      max_unmatched_right_rate: 0.10
+    warnings:
+      - Invoices without subscriptions should be reported separately.
+      - Subscriptions without invoices may represent trialing, recently-created, or data-lag cases.
+
+  - id: customers_to_invoices
+    left_source: dim_customers
+    right_source: stripe_invoices
+    left_key: customer_id
+    right_key: customer_id
+    relationship_type: one_to_many
+    recommended_join_type: left
+    business_meaning: >
+      One customer can have zero or more invoices. Use this relationship to
+      report billed revenue, unpaid invoices, and overdue invoices by segment,
+      country, industry, and account tier.
+    required_for:
+      - subscription_collection_health
+      - invoice_revenue_by_customer_attributes
+    validation:
+      left_key_unique: true
+      right_key_nullable_allowed: false
+      max_unmatched_left_rate: 0.50
+      max_unmatched_right_rate: 0.10
+    warnings:
+      - Customer duplicates can duplicate invoice revenue.
+      - Invoices without customers should be quarantined or flagged.
+
+  - id: invoices_to_payments_by_invoice_id
+    left_source: stripe_invoices
+    right_source: stripe_payments
+    left_key: invoice_id
+    right_key: invoice_id
+    relationship_type: one_to_many
+    recommended_join_type: left
+    business_meaning: >
+      One invoice can be associated with zero or more payment events.
+      Use this relationship to reconcile billed invoice revenue with collected payment revenue.
+    required_for:
+      - billing_reconciliation
+      - invoice_payment_matching
+      - billed_vs_collected_revenue
+      - subscription_revenue_360
+      - subscription_collection_health
+    validation:
+      left_key_unique: true
+      right_key_nullable_allowed: true
+      max_unmatched_left_rate: 0.50
+      max_unmatched_right_rate: 0.30
+    warnings:
+      - Do not join raw invoices and raw payments only by customer_id.
+      - Pre-aggregate payments by invoice_id before joining to avoid duplicated invoice revenue.
+
+  - id: customers_to_payments
+    left_source: dim_customers
+    right_source: stripe_payments
+    left_key: customer_id
+    right_key: customer_id
+    relationship_type: one_to_many
+    recommended_join_type: left
+    business_meaning: >
+      One customer can have zero or more payments. Use this relationship for
+      cash collection analysis by customer attributes when invoice linkage is incomplete.
+    required_for:
+      - subscription_collection_health
+    validation:
+      left_key_unique: true
+      right_key_nullable_allowed: false
+      max_unmatched_left_rate: 0.50
+      max_unmatched_right_rate: 0.10
+    warnings:
+      - Prefer invoice_id reconciliation where available.
+      - Customer-level payment joins are safe only after aggregating to the desired grain.
+
+  - id: invoices_to_payments_by_customer_month
+    left_source: stripe_invoices
+    right_source: stripe_payments
+    left_key:
+      - customer_id
+      - invoice_month
+      - currency
+    right_key:
+      - customer_id
+      - payment_month
+      - currency
+    relationship_type: many_to_many_aggregate
+    recommended_join_type: aggregate_then_join
+    business_meaning: >
+      Aggregate invoices and payments separately to customer-month-currency grain
+      before joining to compare billed revenue and collected revenue.
+    required_for:
+      - monthly_billed_vs_collected_revenue
+    validation:
+      require_pre_aggregation: true
+    warnings:
+      - Never join raw invoices directly to raw payments on customer_id only.
+      - Use this only for aggregate reporting, not invoice-level matching.

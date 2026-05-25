@@ -1,0 +1,54 @@
+version: 1
+
+defaults:
+  demo_data_mode:
+    use_max_data_date_instead_of_system_date: true
+  default_time_phrase: last_month
+
+time_phrases:
+  last_month:
+    label: Last Month
+    business_terms:
+      - last month
+      - previous month
+      - prior month
+    type: previous_calendar_month
+
+  this_month:
+    label: This Month
+    business_terms:
+      - this month
+      - current month
+    type: current_calendar_month
+
+  last_30_days:
+    label: Last 30 Days
+    business_terms:
+      - last 30 days
+      - past 30 days
+      - previous 30 days
+    type: rolling_days
+    days: 30
+
+  all_time:
+    label: All Time
+    business_terms:
+      - all time
+      - overall
+      - total history
+    type: all_time
+
+  this_quarter:
+    label: This Quarter
+    business_terms:
+      - this quarter
+      - current quarter
+    type: current_quarter
+
+  last_quarter:
+    label: Last Quarter
+    business_terms:
+      - last quarter
+      - previous quarter
+      - prior quarter
+    type: previous_quarter

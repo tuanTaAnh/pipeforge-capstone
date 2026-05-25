@@ -1,0 +1,108 @@
+source:
+  name: dim_plans
+  dbt_source: "source('demo', 'dim_plans')"
+  description: "Subscription plan dimension used for product family, billing interval, list price, and plan analytics."
+  owner: "Finance Analytics"
+  aliases:
+    - plans
+    - plan dimension
+    - pricing plans
+    - subscription plans
+    - product family
+    - billing interval
+    - list price
+
+business_context:
+  data_product_goal: "Provide trusted plan attributes for subscription and revenue analysis."
+  final_mart: "dim_plans_clean"
+  metric_name: "plan_count"
+  grain:
+    - plan_id
+  primary_metric_dimensions:
+    - product_family
+    - billing_interval
+    - currency
+  keywords:
+    - plans
+    - pricing
+    - product family
+    - subscription plans
+  notes:
+    - "Plans are dimensions and should usually be joined to subscriptions through plan_id."
+
+artifact_plan:
+  package_name: "Plan Dimension Data Product Draft"
+  source_name: "dim_plans"
+  staging_model: "stg_demo__plans"
+  intermediate_model: "int_plans__clean"
+  final_mart_name: "dim_plans_clean"
+  model_files:
+    - "stg_demo__plans.sql"
+    - "int_plans__clean.sql"
+    - "dim_plans_clean.sql"
+  test_files:
+    - "schema.yml"
+    - "custom_tests/test_plan_id_not_null.sql"
+  documentation_files:
+    - "pipeline_summary.md"
+
+columns:
+  plan_id:
+    type: text
+    primary_key: true
+    nullable: false
+    description: "Unique subscription plan identifier."
+
+  plan_name:
+    type: text
+    nullable: false
+    description: "Plan display name."
+
+  product_family:
+    type: text
+    nullable: false
+    description: "Product family grouping."
+    valid_values:
+      - core_platform
+      - enterprise_suite
+      - ai_addon
+      - legacy
+
+  billing_interval:
+    type: text
+    nullable: false
+    description: "Billing interval for the plan."
+    valid_values:
+      - monthly
+      - annual
+
+  list_price:
+    type: real
+    nullable: false
+    description: "List price for the plan in the plan currency."
+    checks:
+      - type: min_value
+        value: 0
+        inclusive: false
+        severity: must_answer
+        affects:
+          - metric_logic
+          - sql_model
+          - data_tests
+
+  currency:
+    type: text
+    nullable: false
+    description: "Plan currency code."
+    valid_values:
+      - USD
+      - EUR
+      - GBP
+
+  is_active:
+    type: integer
+    nullable: false
+    description: "1 if plan is active, else 0."
+    valid_values:
+      - 0
+      - 1

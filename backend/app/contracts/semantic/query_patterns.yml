@@ -1,0 +1,47 @@
+version: 1
+
+patterns:
+  top_dimension_by_metric:
+    intent: top_k
+    default_limit: 1
+    business_terms:
+      - highest
+      - top
+      - largest
+      - biggest
+      - generated the highest
+      - generated the most
+    examples:
+      - Which customer generated the highest billed revenue last month?
+      - Which segment had the highest collected revenue last month?
+      - Top product family by MRR last month.
+
+  aggregate_metric:
+    intent: aggregate
+    business_terms:
+      - total
+      - how much
+      - what was
+      - what is
+    examples:
+      - What was total billed revenue last month?
+      - How much collected revenue did we have last month?
+
+  aggregate_metric_by_dimension:
+    intent: group_by
+    business_terms:
+      - by
+      - grouped by
+      - broken down by
+    examples:
+      - Show billed revenue by customer segment last month.
+      - MRR by product family last month.
+
+  count_records:
+    intent: count
+    business_terms:
+      - how many
+      - count
+      - number of
+    examples:
+      - How many unpaid invoices do we have last month?

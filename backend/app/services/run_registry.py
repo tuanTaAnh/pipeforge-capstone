@@ -20,6 +20,10 @@ class RunRegistry:
             "artifacts": {},
             "pendingQuestion": None,
             "answerFuture": None,
+            "sourceProfile": None,
+            "plannedQuestions": [],
+            "currentQuestionIndex": 0,
+            "resolvedRules": [],
         }
         self.conditions[run_id] = asyncio.Condition()
         self.locks[run_id] = asyncio.Lock()

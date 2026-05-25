@@ -5,6 +5,23 @@ pydantic-settings==2.14.1
 python-dotenv==1.2.2
 pytest==8.4.2
 httpx==0.28.1
+PyYAML==6.0.2
 
+# OpenHands SDK
 openhands-sdk==1.23.0
 openhands-tools==1.23.0
+
+# Pin transitive dependencies to avoid pip resolver backtracking/conflicts.
+lmnr==0.7.47
+browser-use==0.11.13
+
+opentelemetry-api==1.39.1
+opentelemetry-sdk==1.39.1
+opentelemetry-exporter-otlp-proto-http==1.39.1
+opentelemetry-exporter-otlp-proto-grpc==1.39.1
+opentelemetry-exporter-otlp-proto-common==1.39.1
+opentelemetry-proto==1.39.1
+opentelemetry-instrumentation==0.60b1
+opentelemetry-instrumentation-threading==0.60b1
+opentelemetry-semantic-conventions==0.60b1
+opentelemetry-semantic-conventions-ai==0.4.13

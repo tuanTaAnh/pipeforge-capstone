@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -14,15 +14,30 @@ class StartRunResponse(BaseModel):
     runId: str
 
 
+class AskUserOption(BaseModel):
+    id: str
+    label: str
+    resolved_rule: Optional[str] = None
+    implementation: Optional[str] = None
+
+
 class AskUserQuestion(BaseModel):
     questionId: str
     question: str
-    options: List[str]
+    options: List[AskUserOption]
+    issueSummary: Optional[str] = None
+    priority: Literal["must_answer", "optional_review"] = "must_answer"
+    recommendedOptionId: Optional[str] = None
+    recommendationReason: Optional[str] = None
+    allowCustomAnswer: bool = True
+    validationError: Optional[str] = None
 
 
 class AnswerRequest(BaseModel):
     questionId: str
-    answer: str
+    answer: Optional[str] = None
+    selectedOptionId: Optional[str] = None
+    customAnswer: Optional[str] = None
 
 
 class RetryRequest(BaseModel):

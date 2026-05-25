@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://opencode.ai/zen/v1"
     llm_responses_url: str = "https://opencode.ai/zen/v1/responses"
 
+    use_llm_intent_classifier: bool = True
+    llm_intent_classifier_confidence_threshold: float = 0.80
+    llm_intent_classifier_low_confidence_threshold: float = 0.50
+
     openhands_workspace_dir: str = "/app/workspace"
     database_url: str = "sqlite:////app/data/pipeforge.db"
 

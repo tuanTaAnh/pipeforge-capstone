@@ -1,0 +1,114 @@
+version: 1
+
+dimensions:
+  customer:
+    label: Customer
+    business_terms:
+      - customer
+      - customers
+      - client
+      - account
+    source: dim_customers
+    key: customer_id
+    label_column: customer_name
+    default_columns:
+      - customer_id
+      - customer_name
+    attributes:
+      - customer_segment
+      - country
+      - industry
+      - account_tier
+
+  customer_segment:
+    label: Customer Segment
+    business_terms:
+      - segment
+      - customer segment
+      - customer type
+    source: dim_customers
+    key: customer_id
+    column: customer_segment
+    default_columns:
+      - customer_segment
+
+  country:
+    label: Country
+    business_terms:
+      - country
+      - geography
+      - market
+      - region
+    source: dim_customers
+    key: customer_id
+    column: country
+    default_columns:
+      - country
+
+  industry:
+    label: Industry
+    business_terms:
+      - industry
+      - vertical
+    source: dim_customers
+    key: customer_id
+    column: industry
+    default_columns:
+      - industry
+
+  account_tier:
+    label: Account Tier
+    business_terms:
+      - account tier
+      - tier
+    source: dim_customers
+    key: customer_id
+    column: account_tier
+    default_columns:
+      - account_tier
+
+  product_family:
+    label: Product Family
+    business_terms:
+      - product family
+      - product
+      - plan family
+    source: dim_plans
+    key: plan_id
+    column: product_family
+    default_columns:
+      - product_family
+
+  plan:
+    label: Plan
+    business_terms:
+      - plan
+      - plan name
+      - subscription plan
+    source: dim_plans
+    key: plan_id
+    label_column: plan_name
+    default_columns:
+      - plan_id
+      - plan_name
+      - product_family
+
+  currency:
+    label: Currency
+    business_terms:
+      - currency
+      - currencies
+    source: metric_base
+    column: currency
+    default_columns:
+      - currency
+
+  status:
+    label: Status
+    business_terms:
+      - status
+      - lifecycle status
+    source: metric_base
+    column: status
+    default_columns:
+      - status

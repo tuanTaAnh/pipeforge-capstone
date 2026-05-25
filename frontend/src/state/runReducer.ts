@@ -1,10 +1,71 @@
 import type { Artifact } from "../types/artifact";
 import type { AgentEvent } from "../types/event";
-import type { RunState } from "../types/run";
+import type { AskUserOption, AskUserQuestion, RunState } from "../types/run";
 import { appendActivity, ensureNode } from "./traceTree";
 
 function cloneState(state: RunState): RunState {
   return structuredClone(state);
+}
+
+function parseAskUserQuestion(payload: Record<string, unknown>): AskUserQuestion {
+  console.log("[PF DEBUG][runReducer][raw ask_user payload]", payload);
+
+  const rawOptions = Array.isArray(payload.options) ? payload.options : [];
+
+  const options: AskUserOption[] = rawOptions.map((item) => {
+    if (typeof item === "string") {
+      return {
+        id: item,
+        label: item
+      };
+    }
+
+    const option = item as Record<string, unknown>;
+
+    return {
+      id: String(option.id ?? option.label ?? ""),
+      label: String(option.label ?? option.id ?? ""),
+      resolved_rule:
+        option.resolved_rule === null || option.resolved_rule === undefined
+          ? null
+          : String(option.resolved_rule),
+      implementation:
+        option.implementation === null || option.implementation === undefined
+          ? null
+          : String(option.implementation)
+    };
+  });
+
+  console.log("[PF DEBUG][runReducer][parsed options]", options);
+
+  const parsedQuestion: AskUserQuestion = {
+    questionId: String(payload.questionId),
+    question: String(payload.question),
+    options,
+    issueSummary:
+      payload.issueSummary === null || payload.issueSummary === undefined
+        ? null
+        : String(payload.issueSummary),
+    priority:
+      payload.priority === "optional_review" ? "optional_review" : "must_answer",
+    recommendedOptionId:
+      payload.recommendedOptionId === null || payload.recommendedOptionId === undefined
+        ? null
+        : String(payload.recommendedOptionId),
+    recommendationReason:
+      payload.recommendationReason === null || payload.recommendationReason === undefined
+        ? null
+        : String(payload.recommendationReason),
+    allowCustomAnswer: Boolean(payload.allowCustomAnswer ?? true),
+    validationError:
+      payload.validationError === null || payload.validationError === undefined
+        ? null
+        : String(payload.validationError)
+  };
+
+  console.log("[PF DEBUG][runReducer][parsed question]", parsedQuestion);
+
+  return parsedQuestion;
 }
 
 export function applyEvent(state: RunState, event: AgentEvent): RunState {
@@ -68,23 +129,20 @@ export function applyEvent(state: RunState, event: AgentEvent): RunState {
       break;
     }
 
-    case "ask_user":
+    case "ask_user": {
       next.status = "waiting_for_user";
       node.status = "waiting_for_user";
-      next.pendingQuestion = {
-        questionId: String(event.payload.questionId),
-        question: String(event.payload.question),
-        options: Array.isArray(event.payload.options)
-          ? event.payload.options.map(String)
-          : []
-      };
+      next.pendingQuestion = parseAskUserQuestion(event.payload);
+
       next.chatMessages.push({
         id: event.id,
         role: "assistant",
         text: String(event.payload.question)
       });
+
       appendActivity(next, "Waiting for user input...");
       break;
+    }
 
     case "ask_user_answered":
       next.pendingQuestion = undefined;

@@ -7,13 +7,25 @@ type Props = {
 };
 
 export function TraceTreePanel({ state, onToggleNode }: Props) {
+  const totalAgents = Object.keys(state.nodes).length;
+
   return (
-    <section className="trace-panel">
-      <h2>Agent Trace</h2>
+    <section className="panel trace-panel">
+      <div className="panel-header">
+        <div>
+          <span className="section-kicker">Execution trace</span>
+          <h2>Agent workflow</h2>
+        </div>
+        <span className="count-pill">{totalAgents} agents</span>
+      </div>
 
       <div className="trace-tree">
         {state.rootAgentIds.length === 0 ? (
-          <p className="empty">Trace will appear here as events arrive.</p>
+          <div className="empty-state">
+            <div className="empty-icon">⌁</div>
+            <strong>No trace yet</strong>
+            <p>Agent steps, tool calls, and generated artifacts will appear here.</p>
+          </div>
         ) : (
           state.rootAgentIds.map((nodeId) => (
             <AgentNode

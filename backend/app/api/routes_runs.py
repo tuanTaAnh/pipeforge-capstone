@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 
 from app.schemas.runs import RetryRequest, RunSnapshot, StartRunRequest, StartRunResponse
 from app.services.event_store import event_store
-from app.services.mock_pipeforge_runner import PIPELINE_ARCHITECT, run_mock_pipeforge_workflow
+from app.services.pipeforge_workflow_runner import PIPELINE_ARCHITECT, run_pipeforge_workflow
 from app.services.event_emitter import event_emitter
 from app.services.run_registry import registry
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/runs", tags=["runs"])
 @router.post("", response_model=StartRunResponse)
 async def start_run(request: StartRunRequest) -> StartRunResponse:
     run_id = registry.create_run(request.prompt)
-    asyncio.create_task(run_mock_pipeforge_workflow(run_id, request.prompt))
+    asyncio.create_task(run_pipeforge_workflow(run_id, request.prompt))
     return StartRunResponse(runId=run_id)
 
 

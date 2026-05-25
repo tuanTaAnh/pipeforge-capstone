@@ -2,10 +2,29 @@ import type { Artifact } from "./artifact";
 import type { AgentEvent, AgentNode } from "./event";
 import type { ChatMessage } from "./chat";
 
+export type AskUserOption = {
+  id: string;
+  label: string;
+  resolved_rule?: string | null;
+  implementation?: string | null;
+};
+
 export type AskUserQuestion = {
   questionId: string;
   question: string;
-  options: string[];
+  options: AskUserOption[];
+  issueSummary?: string | null;
+  priority: "must_answer" | "optional_review";
+  recommendedOptionId?: string | null;
+  recommendationReason?: string | null;
+  allowCustomAnswer: boolean;
+  validationError?: string | null;
+};
+
+export type AnswerSubmission = {
+  answer?: string;
+  selectedOptionId?: string;
+  customAnswer?: string;
 };
 
 export type RunStatus =

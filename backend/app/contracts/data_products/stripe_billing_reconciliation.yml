@@ -1,0 +1,177 @@
+version: 1
+
+data_product:
+  name: stripe_billing_reconciliation
+  package_name: Stripe Billing Reconciliation Data Product
+  description: >
+    Reconcile billed invoice revenue from Stripe invoices with collected payment revenue
+    from Stripe payments.
+
+  aliases:
+    - billing reconciliation
+    - invoice payment reconciliation
+    - billed vs collected revenue
+    - compare invoices and payments
+    - compare invoice revenue and payment revenue
+    - reconcile invoices and payments
+    - reconcile billed revenue with collected payment revenue
+    - match payments to invoices
+    - find unpaid invoices
+    - find payments without invoices
+    - invoices without matching payments
+    - payments without matching invoices
+
+  sources:
+    - stripe_invoices
+    - stripe_payments
+
+  primary_source: stripe_invoices
+
+  relationships:
+    - invoices_to_payments_by_invoice_id
+
+  grain:
+    - invoice_id
+    - customer_id
+    - currency
+
+  metrics:
+    - name: billed_amount
+      source: stripe_invoices.invoice_amount
+      description: Gross invoice amount.
+    - name: collected_payment_amount
+      source: stripe_payments.amount
+      aggregation: sum
+      description: Total collected payment amount associated with the invoice.
+    - name: reconciliation_difference
+      expression: billed_amount - collected_payment_amount
+      description: Difference between billed and collected amount.
+
+  business_questions:
+    - id: q_unmatched_invoice_handling
+      issue_id: issue_unmatched_invoices
+      question: How should invoices without matching payments be handled?
+      priority: must_answer
+      issue_summary: Some invoices do not have matching payment records through invoice_id.
+      recommended_option_id: keep_as_unpaid
+      recommendation_reason: Keeping unmatched invoices as unpaid receivables preserves billed revenue visibility without overstating collected cash.
+      options:
+        - id: keep_as_unpaid
+          label: Keep as unpaid/open receivables
+          resolved_rule: Keep unmatched invoices and classify them as unpaid receivables.
+          implementation: Keep invoice rows in the reconciliation model and set payment_match_status = 'unpaid_or_unmatched_invoice'.
+        - id: exclude_from_collected_revenue
+          label: Exclude from collected revenue
+          resolved_rule: Exclude unmatched invoices from collected revenue but report them separately.
+          implementation: Keep unmatched invoices in the reconciliation detail table but exclude them from collected_payment_amount metrics.
+        - id: flag_for_review
+          label: Flag for finance review
+          resolved_rule: Keep unmatched invoices and flag them for finance review.
+          implementation: Keep unmatched invoices and set requires_finance_review = true.
+
+    - id: q_unmatched_payment_handling
+      issue_id: issue_unmatched_payments
+      question: How should payments without a matching invoice be handled?
+      priority: must_answer
+      issue_summary: Some payments do not have a matching invoice_id in the invoice source.
+      recommended_option_id: keep_as_unmatched_cash
+      recommendation_reason: Keeping unmatched cash in a separate bucket avoids losing payment evidence while preventing false invoice reconciliation.
+      options:
+        - id: keep_as_unmatched_cash
+          label: Keep as unmatched cash collection
+          resolved_rule: Keep unmatched payments in a separate unmatched cash bucket.
+          implementation: Create unmatched payment flags and exclude unmatched payments from invoice-level reconciled revenue.
+        - id: exclude_until_mapped
+          label: Exclude until mapped to an invoice
+          resolved_rule: Exclude unmatched payments from reconciled revenue until mapped to a valid invoice.
+          implementation: Filter unmatched payments out of reconciled revenue metrics and document the exclusion.
+        - id: flag_for_review
+          label: Flag for finance review
+          resolved_rule: Flag unmatched payments for finance review.
+          implementation: Keep unmatched payments in the audit output with requires_finance_review = true.
+
+    - id: q_partial_overpayment_handling
+      issue_id: issue_partial_or_overpaid_invoices
+      question: How should partial payments and overpayments be represented in the reconciliation mart?
+      priority: must_answer
+      issue_summary: Some invoices may be partially paid or overpaid after aggregating payments by invoice_id.
+      recommended_option_id: classify_payment_status
+      recommendation_reason: Classifying payment status preserves all invoice evidence and makes reconciliation differences explainable.
+      options:
+        - id: classify_payment_status
+          label: Classify as unpaid, partially paid, fully paid, or overpaid
+          resolved_rule: Classify each invoice by payment coverage and keep the reconciliation difference as an auditable metric.
+          implementation: Add payment_coverage_status and reconciliation_difference columns in the intermediate model.
+        - id: only_fully_paid_as_collected
+          label: Treat only fully paid invoices as collected
+          resolved_rule: Only invoices with collected amount greater than or equal to billed amount are counted as collected.
+          implementation: Set collected revenue to zero for partial payments in the mart and flag partial invoices.
+        - id: flag_partial_and_overpaid
+          label: Flag partial payments and overpayments for review
+          resolved_rule: Keep all payments but flag partial and overpaid invoices for finance review.
+          implementation: Add requires_finance_review for partial and overpaid invoices.
+
+  artifact_plan:
+    package_name: Stripe Billing Reconciliation Data Product
+    source_name: stripe_billing_reconciliation
+    staging_model: stg_stripe__invoices
+    intermediate_model: int_billing__invoice_payment_reconciliation
+    final_mart_name: mart_billing__monthly_reconciliation
+    model_files:
+      - stg_stripe__invoices.sql
+      - stg_stripe__payments.sql
+      - int_billing__invoice_payment_reconciliation.sql
+      - mart_billing__monthly_reconciliation.sql
+    test_files:
+      - schema.yml
+      - custom_tests/test_no_duplicate_invoice_reconciliation_rows.sql
+      - custom_tests/test_reconciliation_difference_not_null.sql
+    documentation_files:
+      - pipeline_summary.md
+
+  join_plan:
+    steps:
+      - id: stg_invoices
+        type: staging
+        source: stripe_invoices
+        output_model: stg_stripe__invoices
+        description: Clean and normalize invoice-level source records.
+      - id: stg_payments
+        type: staging
+        source: stripe_payments
+        output_model: stg_stripe__payments
+        description: Clean and normalize payment-level source records.
+      - id: payments_by_invoice
+        type: aggregate
+        input: stg_stripe__payments
+        group_by:
+          - invoice_id
+          - currency
+        metrics:
+          - name: collected_payment_amount
+            expression: "sum(case when status = 'paid' then amount else 0 end)"
+          - name: payment_count
+            expression: "count(*)"
+        output_model: payments_by_invoice
+        description: Aggregate payments by invoice and currency before joining to invoices.
+      - id: invoice_payment_reconciliation
+        type: left_join
+        relationship_id: invoices_to_payments_by_invoice_id
+        left: stg_stripe__invoices
+        right: payments_by_invoice
+        on:
+          - left: invoice_id
+            right: invoice_id
+          - left: currency
+            right: currency
+        output_model: int_billing__invoice_payment_reconciliation
+        description: Preserve invoices and attach aggregated payment amounts.
+      - id: monthly_reconciliation
+        type: aggregate
+        input: int_billing__invoice_payment_reconciliation
+        group_by:
+          - invoice_month
+          - customer_segment
+          - currency
+        output_model: mart_billing__monthly_reconciliation
+        description: Build the monthly billing reconciliation mart.

@@ -1,7 +1,7 @@
 """
 OpenHands integration placeholder.
 
-The current demo uses mock_pipeforge_runner.py to guarantee that the event stream,
+The current demo uses pipeforge_workflow_runner.py to guarantee that the event stream,
 trace tree, ask_user flow, parallel agents, and artifacts work end-to-end.
 
 Final integration idea:

@@ -1,0 +1,197 @@
+source:
+  name: stripe_payments
+  dbt_source: "source('stripe', 'payments')"
+  description: "Raw Stripe payments source used for collected revenue, MRR analytics, and invoice-payment reconciliation."
+  owner: "Finance Analytics"
+  aliases:
+    - stripe payments
+    - payments
+    - payment data
+    - collected payments
+    - collected revenue
+    - cash revenue
+    - payment collection
+    - mrr
+    - revenue
+    - stripe revenue
+    - monthly recurring revenue
+    - board dashboard
+
+business_context:
+  data_product_goal: "Build a trusted monthly recurring revenue data product for a board dashboard."
+  final_mart: "mart_revenue__monthly_by_segment"
+  metric_name: "monthly_recurring_revenue"
+  grain:
+    - revenue_month
+    - customer_segment
+    - currency
+  primary_metric_dimensions:
+    - customer_segment
+    - currency
+    - invoice_id
+    - subscription_id
+  keywords:
+    - mrr
+    - revenue
+    - finance
+    - payments
+    - collected revenue
+    - stripe
+  notes:
+    - "Revenue logic must be reviewable by analytics engineers."
+    - "Business decisions should be persisted into business_rules.yml."
+    - "Payments can join to invoices through invoice_id and subscriptions through subscription_id."
+
+artifact_plan:
+  package_name: "Stripe Revenue Data Product Draft"
+  source_name: "stripe_payments"
+  staging_model: "stg_stripe__payments"
+  intermediate_model: "int_payments__revenue_rules"
+  final_mart_name: "mart_revenue__monthly_by_segment"
+  model_files:
+    - "stg_stripe__payments.sql"
+    - "int_payments__revenue_rules.sql"
+    - "mart_revenue__monthly_by_segment.sql"
+  test_files:
+    - "schema.yml"
+    - "custom_tests/test_mrr_not_null.sql"
+  documentation_files:
+    - "pipeline_summary.md"
+
+columns:
+  payment_id:
+    type: text
+    primary_key: true
+    nullable: false
+    description: "Unique Stripe payment identifier."
+
+  invoice_id:
+    type: text
+    nullable: true
+    description: "Optional Stripe invoice identifier associated with this payment. Used for invoice-payment reconciliation joins."
+    relationship_hints:
+      references:
+        source: stripe_invoices
+        column: invoice_id
+      cardinality: many_to_one_from_payments_to_invoices
+
+  subscription_id:
+    type: text
+    nullable: true
+    description: "Optional subscription identifier associated with this payment."
+    relationship_hints:
+      references:
+        source: fact_subscriptions
+        column: subscription_id
+      cardinality: many_to_one_from_payments_to_subscriptions
+
+  customer_id:
+    type: text
+    nullable: false
+    description: "Unique customer identifier."
+    relationship_hints:
+      references:
+        source: dim_customers
+        column: customer_id
+      cardinality: many_to_one_from_payments_to_customers
+
+  amount:
+    type: real
+    nullable: false
+    description: "Gross payment amount before discount/refund logic."
+    checks:
+      - type: min_value
+        value: 0
+        inclusive: false
+        severity: must_answer
+        affects:
+          - metric_logic
+          - sql_model
+          - data_tests
+
+  currency:
+    type: text
+    nullable: false
+    description: "ISO-style payment currency code."
+    valid_values:
+      - USD
+      - EUR
+      - GBP
+
+  status:
+    type: text
+    nullable: false
+    description: "Stripe payment lifecycle status."
+    valid_values:
+      - paid
+      - failed
+      - refunded
+
+  paid_at:
+    type: text
+    nullable: true
+    description: "Timestamp when the payment was paid."
+    checks:
+      - type: required_when
+        column: status
+        equals: paid
+        severity: must_answer
+        affects:
+          - metric_logic
+          - sql_model
+          - data_tests
+
+  plan_id:
+    type: text
+    nullable: true
+    description: "Subscription plan identifier."
+
+  customer_segment:
+    type: text
+    nullable: true
+    description: "Business/customer segment used for reporting."
+
+  discount_amount:
+    type: real
+    nullable: true
+    description: "Discount amount applied to the payment."
+    business_rules:
+      require_decision_when_null_rate_ge: 0.05
+      decision_reason: "Missing discounts affect net revenue calculation."
+    checks:
+      - type: max_column_value
+        column: amount
+        severity: optional_review
+        affects:
+          - data_tests
+          - documentation
+
+  refunded_at:
+    type: text
+    nullable: true
+    description: "Timestamp when the payment was refunded."
+    checks:
+      - type: required_when
+        column: status
+        equals: refunded
+        severity: optional_review
+        affects:
+          - data_tests
+          - documentation
+
+business_rules:
+  refund_handling:
+    required_when_status_present: refunded
+    severity: must_answer
+    affects:
+      - metric_logic
+      - sql_model
+      - documentation
+
+  currency_handling:
+    ask_when_multiple_valid_currencies: true
+    severity: must_answer
+    affects:
+      - metric_logic
+      - sql_model
+      - documentation

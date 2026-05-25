@@ -4,16 +4,29 @@ type Props = {
 
 export function ActivityTicker({ activity }: Props) {
   return (
-    <section className="activity-panel">
-      <h2>Activity Ticker</h2>
+    <section className="panel activity-panel">
+      <div className="panel-header">
+        <div>
+          <span className="section-kicker">Operations</span>
+          <h2>Activity</h2>
+        </div>
+        <span className="count-pill">{activity.length} latest</span>
+      </div>
+
       {activity.length === 0 ? (
-        <p className="empty">No activity yet.</p>
+        <div className="empty-state compact-empty">
+          <strong>No activity yet</strong>
+          <p>Run events will be streamed here.</p>
+        </div>
       ) : (
-        <ul>
+        <ol className="activity-feed">
           {activity.map((item, index) => (
-            <li key={`${item}_${index}`}>{item}</li>
+            <li key={`${item}_${index}`}>
+              <span className="activity-dot" />
+              <p>{item}</p>
+            </li>
           ))}
-        </ul>
+        </ol>
       )}
     </section>
   );

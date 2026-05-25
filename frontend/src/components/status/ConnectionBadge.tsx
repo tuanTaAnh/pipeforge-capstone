@@ -4,8 +4,9 @@ type Props = {
 
 export function ConnectionBadge({ connected }: Props) {
   return (
-    <div className={`connection ${connected ? "online" : "offline"}`}>
-      {connected ? "stream connected" : "stream offline"}
+    <div className={`connection-badge ${connected ? "connected" : "disconnected"}`}>
+      <span className="connection-dot" />
+      {connected ? "Stream connected" : "Stream offline"}
     </div>
   );
 }

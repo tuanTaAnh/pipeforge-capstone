@@ -1,3 +1,5 @@
+import json
+
 from typing import Any, Dict, Optional
 
 from app.schemas.agents import AgentInfo
@@ -24,6 +26,22 @@ class EventEmitter:
             agent=agent,
             payload=payload or {},
         )
+        if event_type in {"ask_user", "ask_user_answered", "error"}:
+            print(
+                "[PF DEBUG][event_emitter]",
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "event_type": event_type,
+                        "agent": agent.name,
+                        "payload": payload or {},
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                    indent=2,
+                ),
+                flush=True,
+            )
         await event_store.append(event)
         return event
 

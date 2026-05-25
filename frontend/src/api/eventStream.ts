@@ -13,6 +13,11 @@ export function createRunEventSource(
 
   source.onmessage = (message) => {
     const event = JSON.parse(message.data) as AgentEvent;
+
+    if (event.type === "ask_user" || event.type === "ask_user_answered") {
+      console.log("[PF DEBUG][eventsStream]", event.type, event.payload);
+    }
+
     onEvent(event);
 
     if (event.type === "done") {

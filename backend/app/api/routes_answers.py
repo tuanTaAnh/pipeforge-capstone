@@ -16,7 +16,7 @@ async def submit_answer(run_id: str, request: AnswerRequest) -> dict:
         answer_queue.submit_answer(
             run_id=run_id,
             question_id=request.questionId,
-            answer=request.answer,
+            answer=request.model_dump(exclude_none=True),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -7,4 +7,9 @@ export type Artifact = {
   createdByAgentId: string;
   createdByAgentName: string;
   contentPreview: string;
+  content?: string;
+};
+
+export type ArtifactContentResponse = Partial<Artifact> & {
+  content: string;
 };

@@ -1,0 +1,6 @@
+Naming contract:
+- The final dbt model name must be exactly: $final_mart_name
+- The final mart SQL file must be exactly: $final_mart_name.sql
+- Do not invent, mention, or use any alternative final mart name.
+- schema.yml must describe a model named exactly: $final_mart_name
+- custom_tests/test_mrr_not_null.sql must reference ref('$final_mart_name') or ref("$final_mart_name").

@@ -1,14 +1,14 @@
 import asyncio
+import json
+import os
 import shutil
 from pathlib import Path
-from typing import Dict, List, Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from pydantic import SecretStr
 
 from openhands.sdk import LLM, Agent, Conversation, Tool
 from openhands.tools.file_editor import FileEditorTool
-from openhands.tools.task_tracker import TaskTrackerTool
-from openhands.tools.terminal import TerminalTool
 
 from app.core.config import settings
 
@@ -22,27 +22,14 @@ class GeneratedArtifact(TypedDict):
     content: str
 
 
-SOURCE_PROFILE_CONTEXT = """
-Source: stripe.payments
+PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 
-Columns:
-- payment_id
-- customer_id
-- amount
-- currency
-- status
-- paid_at
-- plan_id
-- customer_segment
-- discount_amount
-- refunded_at
+OPENHANDS_TIMEOUT_SECONDS = int(os.getenv("OPENHANDS_TIMEOUT_SECONDS", "180"))
+OPENHANDS_MAX_CONCURRENCY = int(os.getenv("OPENHANDS_MAX_CONCURRENCY", "1"))
+OPENHANDS_TASK_DELAY_SECONDS = float(os.getenv("OPENHANDS_TASK_DELAY_SECONDS", "0"))
+OPENHANDS_REPAIR_ATTEMPTS = int(os.getenv("OPENHANDS_REPAIR_ATTEMPTS", "1"))
 
-Data quality findings:
-- discount_amount is null in 45% of rows.
-- status contains paid, failed, refunded.
-- payment_id appears unique.
-- currency contains USD, EUR, GBP.
-"""
+_OPENHANDS_SEMAPHORE = asyncio.Semaphore(max(1, OPENHANDS_MAX_CONCURRENCY))
 
 
 def _artifact_type(filename: str) -> ArtifactKind:
@@ -64,23 +51,98 @@ def _build_agent() -> Agent:
     if not settings.llm_model:
         raise RuntimeError("LLM_MODEL is missing")
 
-    llm = LLM(
-        model=settings.llm_model,
-        base_url=settings.llm_base_url,
-        api_key=SecretStr(settings.llm_api_key),
-    )
+    llm_kwargs = {
+        "model": settings.llm_model,
+        "base_url": settings.llm_base_url,
+        "api_key": SecretStr(settings.llm_api_key),
+    }
+
+    if "deepseek-v4-flash-free" in settings.llm_model:
+        llm_kwargs["thinking"] = {"type": "disabled"}
+
+    llm = LLM(**llm_kwargs)
 
     return Agent(
         llm=llm,
         tools=[
-            Tool(name=TerminalTool.name),
             Tool(name=FileEditorTool.name),
-            Tool(name=TaskTrackerTool.name),
         ],
     )
 
 
-def _prepare_workspace(run_id: str, agent_slug: str) -> Path:
+def _format_relative_files(files: list[str]) -> str:
+    return "\n".join(f"- {filename}" for filename in files)
+
+
+def _format_absolute_files(workspace: Path, files: list[str]) -> str:
+    return "\n".join(f"- {workspace / filename}" for filename in files)
+
+
+def _format_artifact_plan_context(artifact_plan: dict[str, Any]) -> str:
+    return json.dumps(artifact_plan, ensure_ascii=False, indent=2, default=str)
+
+
+def _artifact_plan_files(
+    artifact_plan: dict[str, Any],
+    key: str,
+    fallback: list[str],
+) -> list[str]:
+    value = artifact_plan.get(key)
+
+    if not isinstance(value, list):
+        return fallback
+
+    files = [str(item).strip() for item in value if str(item).strip()]
+
+    return files or fallback
+
+
+def _load_prompt(filename: str) -> str:
+    path = PROMPTS_DIR / filename
+
+    if not path.exists():
+        raise RuntimeError(f"Prompt file not found: {path}")
+
+    return path.read_text(encoding="utf-8")
+
+
+def _render_prompt(
+    template: str,
+    workspace: Path,
+    expected_files: list[str],
+    source_profile_context: str,
+    business_rules_context: str,
+    artifact_plan: dict[str, Any],
+    missing_files: list[str] | None = None,
+    original_task_prompt: str | None = None,
+) -> str:
+    missing_files = missing_files or []
+
+    replacements = {
+        "{{WORKSPACE_ROOT}}": str(workspace),
+        "{{SOURCE_PROFILE_CONTEXT}}": source_profile_context,
+        "{{BUSINESS_RULES_CONTEXT}}": business_rules_context,
+        "{{ARTIFACT_PLAN_CONTEXT}}": _format_artifact_plan_context(artifact_plan),
+        "{{EXPECTED_FILES}}": _format_relative_files(expected_files),
+        "{{EXPECTED_ABSOLUTE_PATHS}}": _format_absolute_files(workspace, expected_files),
+        "{{MISSING_FILES}}": _format_relative_files(missing_files),
+        "{{MISSING_ABSOLUTE_PATHS}}": _format_absolute_files(workspace, missing_files),
+        "{{ORIGINAL_TASK_PROMPT}}": original_task_prompt or "",
+    }
+
+    rendered = template
+
+    for key, value in replacements.items():
+        rendered = rendered.replace(key, value)
+
+    return rendered.strip()
+
+
+def _prepare_workspace(
+    run_id: str,
+    agent_slug: str,
+    expected_files: list[str] | None = None,
+) -> Path:
     workspace = settings.workspace_path / run_id / "openhands" / agent_slug
 
     if workspace.exists():
@@ -88,13 +150,54 @@ def _prepare_workspace(run_id: str, agent_slug: str) -> Path:
 
     workspace.mkdir(parents=True, exist_ok=True)
 
+    agents_md = workspace / "AGENTS.md"
+    agents_md.write_text(
+        "\n".join(
+            [
+                "# PipeForge Agent Workspace",
+                "",
+                "This workspace is intentionally minimal and task-scoped.",
+                f"Current workspace root: {workspace}",
+                "",
+                "Execution rules:",
+                "- Do not inspect the filesystem.",
+                "- Do not search for an existing dbt project.",
+                "- Do not inspect parent folders or sibling folders.",
+                "- Do not use relative paths such as '.', '..', './', or '../'.",
+                "- Do not use file_editor view unless the user explicitly asks for inspection.",
+                "- Use file_editor create to create only the exact files requested in the task prompt.",
+                "- Use absolute paths only.",
+                "- Do not create README, notes, alternative files, or extra outputs.",
+                "- Do not modify this AGENTS.md file.",
+                "- Do not call finish until all requested files have been created.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    for filename in expected_files or []:
+        parent_dir = (workspace / filename).parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
+
     return workspace
 
 
-def _read_expected_files(workspace: Path, expected_files: List[str]) -> List[GeneratedArtifact]:
-    artifacts: List[GeneratedArtifact] = []
+def _list_workspace_files(workspace: Path) -> list[str]:
+    return sorted(
+        str(path.relative_to(workspace))
+        for path in workspace.rglob("*")
+        if path.is_file()
+    )
 
-    missing: List[str] = []
+
+def _collect_expected_files(
+    workspace: Path,
+    expected_files: list[str],
+) -> tuple[list[GeneratedArtifact], list[str], list[str]]:
+    artifacts: list[GeneratedArtifact] = []
+    missing: list[str] = []
+    empty: list[str] = []
 
     for filename in expected_files:
         path = workspace / filename
@@ -106,7 +209,8 @@ def _read_expected_files(workspace: Path, expected_files: List[str]) -> List[Gen
         content = path.read_text(encoding="utf-8")
 
         if not content.strip():
-            raise RuntimeError(f"OpenHands created empty file: {filename}")
+            empty.append(filename)
+            continue
 
         artifacts.append(
             {
@@ -116,14 +220,37 @@ def _read_expected_files(workspace: Path, expected_files: List[str]) -> List[Gen
             }
         )
 
-    if missing:
-        files = sorted(str(path.relative_to(workspace)) for path in workspace.rglob("*") if path.is_file())
-        raise RuntimeError(
-            "OpenHands did not create required files. "
-            f"Missing={missing}. Files found={files}"
-        )
+    return artifacts, missing, empty
 
-    return artifacts
+
+def _raise_missing_or_empty_files(
+    workspace: Path,
+    missing: list[str],
+    empty: list[str],
+) -> None:
+    files_found = _list_workspace_files(workspace)
+
+    problems: list[str] = []
+
+    if missing:
+        problems.append(f"Missing={missing}")
+
+    if empty:
+        problems.append(f"Empty={empty}")
+
+    raise RuntimeError(
+        "OpenHands did not create required files. "
+        f"{'. '.join(problems)}. "
+        f"Files found={files_found}"
+    )
+
+
+def _delete_empty_files(workspace: Path, empty_files: list[str]) -> None:
+    for filename in empty_files:
+        path = workspace / filename
+
+        if path.exists() and path.is_file() and not path.read_text(encoding="utf-8").strip():
+            path.unlink()
 
 
 def _run_openhands_task_sync(
@@ -139,147 +266,169 @@ def _run_openhands_task_sync(
 async def _run_openhands_task(
     workspace: Path,
     task_prompt: str,
+    timeout_seconds: int = OPENHANDS_TIMEOUT_SECONDS,
 ) -> None:
-    await asyncio.to_thread(_run_openhands_task_sync, workspace, task_prompt)
+    async with _OPENHANDS_SEMAPHORE:
+        if OPENHANDS_TASK_DELAY_SECONDS > 0:
+            await asyncio.sleep(OPENHANDS_TASK_DELAY_SECONDS)
+
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(_run_openhands_task_sync, workspace, task_prompt),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                f"OpenHands task timed out after {timeout_seconds} seconds."
+            ) from exc
+
+
+async def _run_task_and_collect_with_repair(
+    workspace: Path,
+    task_prompt: str,
+    expected_files: list[str],
+    source_profile_context: str,
+    business_rules_context: str,
+    artifact_plan: dict[str, Any],
+) -> list[GeneratedArtifact]:
+    await _run_openhands_task(workspace, task_prompt)
+
+    artifacts, missing, empty = _collect_expected_files(workspace, expected_files)
+
+    if not missing and not empty:
+        return artifacts
+
+    for _ in range(OPENHANDS_REPAIR_ATTEMPTS):
+        _delete_empty_files(workspace, empty)
+
+        repair_template = _load_prompt("repair_prompt.txt")
+        repair_prompt = _render_prompt(
+            template=repair_template,
+            workspace=workspace,
+            expected_files=expected_files,
+            source_profile_context=source_profile_context,
+            business_rules_context=business_rules_context,
+            artifact_plan=artifact_plan,
+            missing_files=[*missing, *empty],
+            original_task_prompt=task_prompt,
+        )
+
+        await _run_openhands_task(workspace, repair_prompt)
+
+        artifacts, missing, empty = _collect_expected_files(workspace, expected_files)
+
+        if not missing and not empty:
+            return artifacts
+
+    _raise_missing_or_empty_files(workspace, missing, empty)
 
 
 async def generate_model_artifacts_with_openhands(
     run_id: str,
-    discount_rule: str,
-) -> List[GeneratedArtifact]:
-    expected_files = [
-        "stg_stripe__payments.sql",
-        "int_payments__revenue_rules.sql",
-        "mart_revenue__monthly_by_segment.sql",
-    ]
+    source_profile_context: str,
+    business_rules_context: str,
+    artifact_plan: dict[str, Any],
+) -> list[GeneratedArtifact]:
+    expected_files = _artifact_plan_files(
+        artifact_plan,
+        "model_files",
+        [
+            "stg_source__table.sql",
+            "int_table__rules.sql",
+            "mart_table__summary.sql",
+        ],
+    )
 
-    workspace = _prepare_workspace(run_id, "model-builder")
+    workspace = _prepare_workspace(run_id, "model-builder", expected_files)
 
-    task_prompt = f"""
-You are the Model Builder agent for PipeForge.
+    prompt_template = _load_prompt("model_builder_prompt.txt")
+    task_prompt = _render_prompt(
+        template=prompt_template,
+        workspace=workspace,
+        expected_files=expected_files,
+        source_profile_context=source_profile_context,
+        business_rules_context=business_rules_context,
+        artifact_plan=artifact_plan,
+    )
 
-Your task:
-Create exactly these 3 dbt SQL files in the current workspace root:
-1. stg_stripe__payments.sql
-2. int_payments__revenue_rules.sql
-3. mart_revenue__monthly_by_segment.sql
-
-Business goal:
-Create a trusted monthly revenue dataset from Stripe payments for a Finance board dashboard.
-The final mart should calculate monthly recurring revenue by customer segment.
-
-Source profile:
-{SOURCE_PROFILE_CONTEXT}
-
-Confirmed business rule:
-Missing discount handling = {discount_rule}
-
-Requirements:
-- Use dbt-style SQL with source() and ref().
-- stg_stripe__payments.sql must normalize the raw source.
-- If the business rule says missing discount should be treated as 0, use coalesce(discount_amount, 0).
-- int_payments__revenue_rules.sql must define net_revenue_amount and is_revenue_eligible.
-- Failed payments should not count as revenue.
-- Refunded payments should reduce revenue.
-- mart_revenue__monthly_by_segment.sql must aggregate:
-  revenue_month,
-  customer_segment,
-  currency,
-  monthly_recurring_revenue,
-  active_paying_customers.
-
-Important:
-- Create only the requested files.
-- Do not create explanations outside the files.
-- Do not ask follow-up questions.
-"""
-
-    await _run_openhands_task(workspace, task_prompt)
-
-    return _read_expected_files(workspace, expected_files)
+    return await _run_task_and_collect_with_repair(
+        workspace=workspace,
+        task_prompt=task_prompt,
+        expected_files=expected_files,
+        source_profile_context=source_profile_context,
+        business_rules_context=business_rules_context,
+        artifact_plan=artifact_plan,
+    )
 
 
 async def generate_test_artifacts_with_openhands(
     run_id: str,
-    discount_rule: str,
-) -> List[GeneratedArtifact]:
-    expected_files = [
-        "schema.yml",
-        "custom_tests/test_mrr_not_null.sql",
-    ]
+    source_profile_context: str,
+    business_rules_context: str,
+    artifact_plan: dict[str, Any],
+) -> list[GeneratedArtifact]:
+    expected_files = _artifact_plan_files(
+        artifact_plan,
+        "test_files",
+        [
+            "schema.yml",
+            "custom_tests/test_primary_metric_not_null.sql",
+        ],
+    )
 
-    workspace = _prepare_workspace(run_id, "test-writer")
+    workspace = _prepare_workspace(run_id, "test-writer", expected_files)
 
-    task_prompt = f"""
-You are the Test Writer agent for PipeForge.
+    prompt_template = _load_prompt("test_writer_prompt.txt")
+    task_prompt = _render_prompt(
+        template=prompt_template,
+        workspace=workspace,
+        expected_files=expected_files,
+        source_profile_context=source_profile_context,
+        business_rules_context=business_rules_context,
+        artifact_plan=artifact_plan,
+    )
 
-Your task:
-Create exactly these files in the current workspace:
-1. schema.yml
-2. custom_tests/test_mrr_not_null.sql
-
-Business goal:
-Create dbt tests for a Stripe MRR data product.
-
-Source profile:
-{SOURCE_PROFILE_CONTEXT}
-
-Confirmed business rule:
-Missing discount handling = {discount_rule}
-
-Requirements:
-- schema.yml should include model descriptions and column tests.
-- Include tests for payment_id uniqueness, not_null checks, accepted_values for status, and final mart metric quality.
-- custom_tests/test_mrr_not_null.sql should check that monthly_recurring_revenue is not null in the final mart.
-- Use dbt-compatible YAML/SQL.
-
-Important:
-- Create only the requested files.
-- Do not ask follow-up questions.
-"""
-
-    await _run_openhands_task(workspace, task_prompt)
-
-    return _read_expected_files(workspace, expected_files)
+    return await _run_task_and_collect_with_repair(
+        workspace=workspace,
+        task_prompt=task_prompt,
+        expected_files=expected_files,
+        source_profile_context=source_profile_context,
+        business_rules_context=business_rules_context,
+        artifact_plan=artifact_plan,
+    )
 
 
 async def generate_doc_artifacts_with_openhands(
     run_id: str,
-    discount_rule: str,
-) -> List[GeneratedArtifact]:
-    expected_files = [
-        "pipeline_summary.md",
-    ]
+    source_profile_context: str,
+    business_rules_context: str,
+    artifact_plan: dict[str, Any],
+) -> list[GeneratedArtifact]:
+    expected_files = _artifact_plan_files(
+        artifact_plan,
+        "documentation_files",
+        [
+            "pipeline_summary.md",
+        ],
+    )
 
-    workspace = _prepare_workspace(run_id, "doc-writer")
+    workspace = _prepare_workspace(run_id, "doc-writer", expected_files)
 
-    task_prompt = f"""
-    You are the Documentation Writer agent for PipeForge.
-    
-    Your task:
-    Create exactly this file in the current workspace root:
-    1. pipeline_summary.md
-    
-    Business goal:
-    Document a Stripe Revenue Data Product Draft for analytics review.
-    
-    Source profile:
-    {SOURCE_PROFILE_CONTEXT}
-    
-    Confirmed business rule:
-    Missing discount handling = {discount_rule}
-    
-    Requirements:
-    - Explain the purpose of the data product.
-    - Name the final mart: mart_revenue__monthly_by_segment.
-    - Explain metrics, dimensions, assumptions, and next steps.
-    - Mention that analytics engineers should review the files, copy them into dbt, run dbt build/dbt test, then connect the final mart to BI.
-    
-    Important:
-    - Create only pipeline_summary.md.
-    - Do not ask follow-up questions.
-    """
+    prompt_template = _load_prompt("documentation_writer_prompt.txt")
+    task_prompt = _render_prompt(
+        template=prompt_template,
+        workspace=workspace,
+        expected_files=expected_files,
+        source_profile_context=source_profile_context,
+        business_rules_context=business_rules_context,
+        artifact_plan=artifact_plan,
+    )
 
-    await _run_openhands_task(workspace, task_prompt)
-
-    return _read_expected_files(workspace, expected_files)
+    return await _run_task_and_collect_with_repair(
+        workspace=workspace,
+        task_prompt=task_prompt,
+        expected_files=expected_files,
+        source_profile_context=source_profile_context,
+        business_rules_context=business_rules_context,
+        artifact_plan=artifact_plan,
+    )

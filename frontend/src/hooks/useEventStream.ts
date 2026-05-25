@@ -28,6 +28,7 @@ export function useEventStream({ onEvent, onDisconnected }: UseEventStreamParams
 
         if (event.type === "done") {
           eventSourceRef.current?.close();
+          eventSourceRef.current = null;
         }
       },
       () => {
@@ -44,6 +45,9 @@ export function useEventStream({ onEvent, onDisconnected }: UseEventStreamParams
 
   function close() {
     eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    runIdRef.current = undefined;
+    lastSeqRef.current = 0;
   }
 
   return {

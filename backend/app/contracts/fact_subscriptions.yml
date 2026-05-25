@@ -1,0 +1,159 @@
+source:
+  name: fact_subscriptions
+  dbt_source: "source('demo', 'fact_subscriptions')"
+  description: "Subscription lifecycle fact used for MRR, churn, plan, customer, and product-family analytics."
+  owner: "Finance Analytics"
+  aliases:
+    - subscriptions
+    - subscription data
+    - subscription fact
+    - mrr
+    - recurring revenue
+    - churn
+    - active subscriptions
+    - subscription lifecycle
+
+business_context:
+  data_product_goal: "Build trusted subscription-level MRR and lifecycle analytics."
+  final_mart: "mart_subscription__monthly_mrr"
+  metric_name: "monthly_recurring_revenue"
+  grain:
+    - subscription_id
+  primary_metric_dimensions:
+    - customer_id
+    - plan_id
+    - status
+    - currency
+  keywords:
+    - subscriptions
+    - mrr
+    - recurring revenue
+    - churn
+    - expansion
+    - product family
+  notes:
+    - "Subscriptions connect customer and plan dimensions to invoice and payment facts."
+
+artifact_plan:
+  package_name: "Subscription MRR Data Product Draft"
+  source_name: "fact_subscriptions"
+  staging_model: "stg_demo__subscriptions"
+  intermediate_model: "int_subscriptions__mrr_rules"
+  final_mart_name: "mart_subscription__monthly_mrr"
+  model_files:
+    - "stg_demo__subscriptions.sql"
+    - "int_subscriptions__mrr_rules.sql"
+    - "mart_subscription__monthly_mrr.sql"
+  test_files:
+    - "schema.yml"
+    - "custom_tests/test_subscription_mrr_not_null.sql"
+  documentation_files:
+    - "pipeline_summary.md"
+
+columns:
+  subscription_id:
+    type: text
+    primary_key: true
+    nullable: false
+    description: "Unique subscription identifier."
+
+  customer_id:
+    type: text
+    nullable: false
+    description: "Customer associated with the subscription."
+    relationship_hints:
+      references:
+        source: dim_customers
+        column: customer_id
+      cardinality: many_to_one_from_subscriptions_to_customers
+
+  plan_id:
+    type: text
+    nullable: false
+    description: "Plan associated with the subscription."
+    relationship_hints:
+      references:
+        source: dim_plans
+        column: plan_id
+      cardinality: many_to_one_from_subscriptions_to_plans
+
+  status:
+    type: text
+    nullable: false
+    description: "Subscription lifecycle status."
+    valid_values:
+      - active
+      - past_due
+      - canceled
+      - trialing
+
+  started_at:
+    type: text
+    nullable: false
+    description: "Subscription start date."
+
+  ended_at:
+    type: text
+    nullable: true
+    description: "Subscription end date if canceled."
+    checks:
+      - type: required_when
+        column: status
+        equals: canceled
+        severity: optional_review
+        affects:
+          - documentation
+          - data_tests
+
+  mrr_amount:
+    type: real
+    nullable: false
+    description: "Monthly recurring revenue amount normalized to monthly value."
+    checks:
+      - type: min_value
+        value: 0
+        inclusive: false
+        severity: must_answer
+        affects:
+          - metric_logic
+          - sql_model
+          - data_tests
+
+  currency:
+    type: text
+    nullable: false
+    description: "Subscription revenue currency."
+    valid_values:
+      - USD
+      - EUR
+      - GBP
+
+  quantity:
+    type: integer
+    nullable: false
+    description: "Number of subscribed seats or units."
+    checks:
+      - type: min_value
+        value: 0
+        inclusive: false
+        severity: optional_review
+        affects:
+          - data_tests
+          - documentation
+
+business_rules:
+  subscription_status_handling:
+    required_when_status_present: past_due
+    severity: must_answer
+    affects:
+      - metric_logic
+      - sql_model
+      - documentation
+
+  currency_handling:
+    ask_when_multiple_valid_currencies: true
+    severity: must_answer
+    affects:
+      - metric_logic
+      - sql_model
+      - documentation
