@@ -1,0 +1,19 @@
+The previous planner output failed validation.
+
+# Original system prompt
+{{ORIGINAL_SYSTEM_PROMPT}}
+
+# Original user prompt
+{{ORIGINAL_USER_PROMPT}}
+
+# Invalid output JSON
+```json
+{{INVALID_OUTPUT_JSON}}
+```
+
+# Validation errors
+```json
+{{VALIDATION_ERRORS_JSON}}
+```
+
+Repair the JSON only. Do not explain. Do not add markdown. Use only valid metadata, tables, columns, sources, and schema fields required by the original task.
