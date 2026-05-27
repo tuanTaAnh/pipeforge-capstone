@@ -153,6 +153,7 @@ Semantic dimensions
 Relationships
 Data product contracts
 Known limitations
+Business clarification rules
 ```
 
 This allows the LLM and agents to work within known schema boundaries instead of inventing unavailable tables or columns.
@@ -237,7 +238,11 @@ The backend streams normalized events such as:
 ```text
 session_started
 agent_started
+agent_thinking
 tool_started
+tool_completed
+sub_agent_started
+sub_agent_completed
 ask_user
 ask_user_answered
 artifact_created
@@ -359,8 +364,26 @@ Create a monthly billed revenue pipeline from Stripe invoices for the analytics 
 Expected behavior:
 
 ```text
-Generates a pipeline/data product draft using invoice data.
-Creates SQL models, tests, and documentation.
+Generates a reusable pipeline draft using invoice data.
+Creates SQL models, validation metadata, and documentation.
+The generated pipeline can be reviewed and executed from the frontend.
+```
+
+---
+
+### Aggregation pipeline request
+
+```text
+Create a pipeline that calculates monthly minimum, maximum, and average invoice amount from Stripe invoices.
+```
+
+Expected behavior:
+
+```text
+Generates a monthly invoice amount statistics pipeline.
+Uses invoice_month as the monthly grain.
+Uses invoice_amount for min, max, and average calculations.
+Creates runnable SQL artifacts and documentation.
 ```
 
 ---
@@ -392,13 +415,16 @@ Backend: FastAPI + Python
 Database: SQLite demo database
 LLM layer: LiteLLM-compatible client
 Agent execution: OpenHands-based bounded artifact generation
-Deployment: Docker / Hugging Face Spaces
+Local runtime: Docker Compose
 ```
 
 High-level runtime architecture:
 
 ```text
 User request
+   |
+   v
+Frontend workspace
    |
    v
 FastAPI backend
@@ -442,7 +468,7 @@ Answer artifacts         Model/Test/Doc agents
 
 ### Step 1 — Load metadata context
 
-The backend reads YAML contracts, semantic metadata, schema definitions, relationships, metrics, dimensions, data products, and known limitations.
+The backend reads YAML contracts, semantic metadata, schema definitions, relationships, metrics, dimensions, data products, clarification rules, and known limitations.
 
 ### Step 2 — LLM Request Planner
 
@@ -468,7 +494,9 @@ It rejects unknown sources, metrics, dimensions, or data products.
 
 ### Step 4 — Ask user if needed
 
-If the planner marks a business decision as required, the backend streams an `ask_user` event to the frontend.
+If a business decision is required, the backend streams an `ask_user` event to the frontend.
+
+The user's answer is stored as a resolved business rule and used by downstream generation.
 
 ### Branch A — Direct Analytics
 
@@ -483,14 +511,14 @@ returns analytics artifacts
 
 ### Branch B — Data Product Generation
 
-For data product requests, the backend:
+For data product or pipeline requests, the backend:
 
 ```text
 loads selected contracts
 profiles real data
 asks for business decisions if needed
 creates artifact_plan.json
-dispatches model/test/doc generation tasks
+generates SQL models, tests, and documentation
 validates generated artifacts
 repairs failed artifacts only
 returns final artifacts
@@ -610,7 +638,7 @@ Compiles and executes generated SQL pipeline artifacts.
 
 ### `backend/app/services/runtime/`
 
-Handles event streaming, event storage, run registry, and flow logging.
+Handles event streaming, event storage, run registry, answer queue, and flow logging.
 
 ---
 
@@ -683,47 +711,6 @@ Backend:  http://localhost:8000
 
 ---
 
-## Running Locally with Single Docker Container
-
-The repository also supports a production-style single-container build.
-
-Build:
-
-```bash
-docker build -t pipeforge-hf .
-```
-
-Run:
-
-```bash
-docker run --rm -p 7860:7860 \
-  -e APP_ENV=production \
-  -e PORT=7860 \
-  -e BACKEND_PORT=7860 \
-  -e LLM_API_KEY="your_api_key_here" \
-  -e LLM_MODEL="gpt-5.1-codex-mini" \
-  -e LLM_BASE_URL="https://opencode.ai/zen/v1" \
-  -e OPENHANDS_MAX_CONCURRENCY=1 \
-  -e OPENHANDS_TASK_DELAY_SECONDS=0 \
-  -e OPENHANDS_TIMEOUT_SECONDS=300 \
-  -e OPENHANDS_REPAIR_ATTEMPTS=1 \
-  -e OPENHANDS_WORKSPACE_DIR="/app/workspace" \
-  -e OPENHANDS_SUPPRESS_BANNER=1 \
-  -e DATABASE_URL="sqlite:////app/data/pipeforge_demo.db" \
-  -e CORS_ORIGINS="*" \
-  -e USE_LLM_QUESTION_PLANNER=1 \
-  -e QUESTION_PLANNER_MAX_MUST_ANSWER=3 \
-  pipeforge-hf
-```
-
-Then open:
-
-```text
-http://localhost:7860
-```
-
----
-
 ## Environment Variables
 
 Create local `.env` files for development, but do not commit real secrets.
@@ -751,46 +738,6 @@ CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
 USE_LLM_QUESTION_PLANNER=1
 QUESTION_PLANNER_MAX_MUST_ANSWER=3
-```
-
-For production-style single-container deployment, the frontend should use same-origin API paths.
-
-In the current setup:
-
-```text
-API_BASE = ""
-```
-
-and frontend API calls use paths such as:
-
-```text
-/api/runs
-/api/database/graph
-/api/runs/{runId}/events
-```
-
----
-
-## Deployment Notes
-
-The live demo is deployed as a Docker-based Hugging Face Space.
-
-Deployment approach:
-
-```text
-Build React frontend into static files
-Copy frontend build into backend image
-Run FastAPI on port 7860
-Serve both API routes and React frontend from one container
-```
-
-The backend serves:
-
-```text
-/api/...        backend API
-/assets/...     frontend assets
-/               React app
-/{path}         React route fallback
 ```
 
 ---
