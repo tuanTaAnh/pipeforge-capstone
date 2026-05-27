@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     llm_intent_classifier_confidence_threshold: float = 0.80
     llm_intent_classifier_low_confidence_threshold: float = 0.50
 
+    # Submission-safe default: keep simple pipeline fast path disabled so
+    # pipeline/data-product requests use the full transparent agent workflow.
+    # Set ENABLE_SIMPLE_PIPELINE_FAST_PATH=true only for local/product optimization.
+    enable_simple_pipeline_fast_path: bool = False
+
     openhands_workspace_dir: str = "/app/workspace"
     database_url: str = "sqlite:////app/data/pipeforge.db"
 

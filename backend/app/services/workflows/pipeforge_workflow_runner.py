@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.core.config import settings
 from app.schemas.agents import AgentInfo
 from app.schemas.llm_plans import PlannerQuestion, RequestPlan
 from app.services.analytics.analytics_query_runner import run_direct_analytics_query
@@ -685,21 +686,22 @@ async def run_data_product_generation(
     if not selected_sources:
         raise RuntimeError("Data product generation requires selected sources.")
 
-    simple_pipeline_config = find_simple_pipeline_generation_config(
-        metadata_context=metadata_context,
-        request_plan=request_plan,
-        previous_user_answers=previous_user_answers,
-    )
-    if simple_pipeline_config is not None:
-        await run_simple_pipeline_generation(
-            run_id=run_id,
-            prompt=prompt,
-            request_plan=request_plan,
+    if settings.enable_simple_pipeline_fast_path:
+        simple_pipeline_config = find_simple_pipeline_generation_config(
             metadata_context=metadata_context,
+            request_plan=request_plan,
             previous_user_answers=previous_user_answers,
-            simple_pipeline_config=simple_pipeline_config,
         )
-        return
+        if simple_pipeline_config is not None:
+            await run_simple_pipeline_generation(
+                run_id=run_id,
+                prompt=prompt,
+                request_plan=request_plan,
+                metadata_context=metadata_context,
+                previous_user_answers=previous_user_answers,
+                simple_pipeline_config=simple_pipeline_config,
+            )
+            return
 
     await event_emitter.emit(
         run_id,
