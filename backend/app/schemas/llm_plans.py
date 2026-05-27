@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 
 RequestType = Literal["direct_analytics", "data_product_generation", "clarification", "out_of_scope"]
@@ -18,6 +18,7 @@ class PlannerOption(BaseModel):
 
 class PlannerQuestion(BaseModel):
     id: str = "q_llm_clarification"
+    issue_id: str | None = Field(default=None, validation_alias=AliasChoices("issue_id", "issueId"))
     question: str
     issue_summary: str | None = None
     priority: str = "must_answer"

@@ -1,7 +1,7 @@
 import type { RunState } from "../types/run";
 
 export const samplePrompt =
-  "Our finance team needs a trusted monthly revenue dataset from Stripe for a board dashboard. We need MRR by customer segment, but we are not sure how refunds and discounts should be handled. Can you prepare this as a data product draft for our analytics team?";
+  "Help me create a monthly revenue pipeline from Stripe data.";
 
 export function createInitialState(): RunState {
   return {

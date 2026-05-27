@@ -55,26 +55,14 @@ Output limits:
 - warnings max 3 short items.
 - Do not include long explanations.
 
-Current demo domain:
-PipeForge only knows customers, plans, subscriptions, invoices, payments, MRR, billed revenue, collected revenue, discounts, refunds, net MRR, customer segment, invoice_month, and payment_month.
-
-Unavailable concepts:
-- currency
-- FX conversion
-- subscription status
-- payment status
-- payment_amount
-- country
-- monthly_price
-- issued_at / paid_at / refunded_at
-
-Never ask about unavailable concepts.
-Never select unavailable sources, metrics, dimensions, or columns.
+Use only metadata provided in the compact metadata context.
+Never invent sources, metrics, dimensions, data products, columns, or concepts that are absent from metadata.
+Respect known_limitations.
 
 Routing rules:
 
 1. out_of_scope
-Use when the question is unrelated to the available PipeForge subscription/revenue dataset.
+Use when the question is unrelated to the available metadata/domain.
 For out_of_scope:
 - clarification_required = false
 - selected_sources = []
@@ -83,100 +71,37 @@ For out_of_scope:
 - selected_data_product = null
 
 2. direct_analytics
-Use when the user asks for one immediate analytical answer that can be solved by one read-only SQL query.
-
-Common direct analytics mappings:
-- successful payment / payment amount / min max payment -> stripe_payments, collected_revenue
-- MRR / gross MRR -> fact_subscriptions, mrr or gross_mrr
-- customer / top customer / highest customer -> include dim_customers
-- customer segment -> include dim_customers, customer_segment
-- plan / plan name -> include dim_plans
-- billed revenue / invoice revenue -> stripe_invoices, billed_revenue
-- discount -> stripe_invoices, discount_amount
-- refund -> stripe_payments, refund_amount
-- collected revenue -> stripe_payments, collected_revenue
-- invoice month / May 2026 for invoice or billed revenue -> invoice_month
-- payment month for collection/payment questions -> payment_month
-
-Do not ask clarification for clear direct analytics questions such as:
-- "What are the minimum and maximum successful payment amounts?"
-- "Who is the customer with highest MRR?"
-- "Show MRR by customer segment."
-- "What was billed revenue in May 2026?"
+Use when the user asks for one immediate analytical answer that can be solved by one read-only query.
+Select only sources, metrics, and dimensions that exist in metadata.
+If the metric/source/dimension is clear from business terms, do not ask a clarification.
 
 3. data_product_generation
 Use when the user asks to build, prepare, draft, generate, create, or package a reusable data product, trusted dataset, mart, pipeline, dbt-style models, tests, or docs.
-
-Preferred data product mapping:
-- monthly subscription revenue, board dashboard revenue, MRR by customer segment, gross/net MRR, discounts, refunds -> subscription_revenue_360
-- invoice/payment reconciliation -> stripe_billing_reconciliation
-- collection health -> subscription_collection_health
-
-For subscription_revenue_360, normally select:
-- dim_customers
-- dim_plans
-- fact_subscriptions
-- stripe_invoices
-- stripe_payments
+Select the best data product from metadata when one clearly matches the request.
+If no data product clearly matches, select the relevant sources/metrics/dimensions only.
 
 4. clarification
 Use clarification only for a must-answer business decision.
-Do not ask for optional profiling issues.
-Do not ask for currency/status/payment status because those concepts do not exist in this demo database.
+Prefer a concise clarification question over guessing a broad business definition.
+Do not ask about optional profiling issues.
+Do not ask about concepts that are listed as unavailable in known_limitations.
 
-Mandatory clarification cases:
-- User explicitly says they are not sure how refunds should be handled.
-- User explicitly says they are not sure how discounts should be handled.
-- User asks for a trusted revenue/MRR data product and refund/discount treatment is unclear.
-- User asks for "revenue" without enough context to choose billed revenue, collected revenue, gross MRR, or net MRR.
-
-Refund/discount clarification:
-If needed, ask exactly this question:
-"How should refunds and discounts be handled in the monthly revenue data product?"
-
-Use exactly these options:
-[
-  {
-    "id": "gross_only",
-    "label": "Report gross MRR only and show adjustments separately",
-    "description": "Keep gross MRR unchanged and expose adjustments separately.",
-    "resolved_rule": "Keep gross MRR unchanged and expose discounts/refunds as separate supporting columns.",
-    "implementation": "Build gross_mrr plus discount_amount and refund_amount without netting."
-  },
-  {
-    "id": "net_only",
-    "label": "Report net MRR after discounts and refunds",
-    "description": "Deduct discounts and refunds from gross MRR.",
-    "resolved_rule": "Net MRR equals gross MRR minus discount and refund adjustments.",
-    "implementation": "Derive net_mrr = gross_mrr - discount_amount - refund_amount."
-  },
-  {
-    "id": "gross_and_net",
-    "label": "Report both gross MRR and net MRR with adjustment breakdown",
-    "description": "Show gross MRR, adjustment columns, and net MRR together.",
-    "resolved_rule": "Report gross_mrr, discount_amount, refund_amount, and net_mrr together.",
-    "implementation": "Build gross and net MRR at invoice_month/customer_segment grain."
-  }
-]
-
-Recommended option: gross_and_net.
-Recommendation reason: "It gives finance transparency and a board-ready net metric."
-
-Previous user answers:
-- If previous answers are present, treat them as resolved business rules.
-- Do not ask the same clarification again.
-- If the user selected gross_and_net, continue data_product_generation with clarification_required = false.
-- Include the resolved decision as a short assumption.
+Clarification rules:
+The metadata context may include clarification_rules. These are database/domain-specific configuration.
+If a user request matches a clarification rule, follow that rule's question/options/intent instead of inventing your own.
+If previous user answers are present, treat them as resolved rules and do not ask the same clarification again.
+Continue with the appropriate request_type after a required clarification is resolved.
 
 Validation rules:
-- selected_sources must exist in metadata.
-- selected_metrics must exist in metadata.
-- selected_dimensions must exist in metadata.
-- selected_data_product must exist in metadata or be null.
-- Do not invent names.
+- selected_sources must exist in metadata.allowed_sources.
+- selected_metrics must exist in metadata.allowed_metrics.
+- selected_dimensions must exist in metadata.allowed_dimensions.
+- selected_data_product must exist in metadata.allowed_data_products or be null.
 - Do not include raw column names as metrics unless they are defined metrics.
+- If clarification_required = true, include a clarification_question with at least one option unless custom-only clarification is necessary.
 
 For the user request:
-- If it asks for a data product and says refunds/discounts are unclear, return data_product_generation with clarification_required = true.
-- If it asks a direct metric question, return direct_analytics with clarification_required = false.
-- If it is unrelated to the available dataset, return out_of_scope.
+- If it asks for a data product/pipeline and a metadata clarification rule applies, return that rule as clarification_required = true.
+- If it asks a clear direct metric question, return direct_analytics with clarification_required = false.
+- If it asks for a reusable output, return data_product_generation.
+- If it is unrelated to the available metadata, return out_of_scope.

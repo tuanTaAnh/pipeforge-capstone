@@ -1,0 +1,358 @@
+version: 1
+
+# Database/domain-specific ambiguity rules.
+# Python should read this as configuration and should not hard-code Stripe,
+# revenue, invoices, payments, subscriptions, or option labels.
+clarification_rules:
+  - id: revenue_definition_for_pipeline
+    enabled: true
+    description: Ask which revenue definition to use when a reusable revenue pipeline/data product request is broad.
+    match:
+      all_any:
+        action_terms:
+          - create
+          - build
+          - generate
+          - prepare
+          - make
+          - draft
+          - help create
+          - help me create
+        artifact_terms:
+          - pipeline
+          - data product
+          - dataset
+          - mart
+          - model
+          - models
+          - dbt
+          - dashboard dataset
+        business_terms:
+          - revenue
+          - mrr
+          - monthly recurring revenue
+        domain_terms:
+          - stripe
+          - invoice
+          - invoices
+          - payment
+          - payments
+          - subscription
+          - subscriptions
+      missing_explicit_choice_from_options: true
+    plan_defaults:
+      request_type: data_product_generation
+      selected_sources:
+        - fact_subscriptions
+        - stripe_invoices
+        - stripe_payments
+      selected_metrics:
+        - billed_revenue
+        - collected_revenue
+        - mrr
+        - gross_mrr
+        - net_mrr
+      selected_dimensions:
+        - invoice_month
+        - payment_month
+        - customer_segment
+      selected_data_product: null
+      business_interpretation: Create a monthly revenue pipeline after the user confirms the revenue definition.
+      warnings:
+        - Revenue definition is ambiguous and must be confirmed before pipeline generation.
+    clarification:
+      id: q_revenue_definition
+      question: Which revenue definition should this monthly pipeline use?
+      issue_summary: The request asks for monthly revenue, but the revenue basis is ambiguous.
+      priority: must_answer
+      recommended_option_id: billed_revenue
+      recommendation_reason: Billed revenue is a safe default for invoice-based revenue pipelines; choose another basis if the business meaning is different.
+      allow_custom_answer: true
+    options:
+      - id: billed_revenue
+        aliases:
+          - billed revenue
+          - invoice revenue
+          - invoiced revenue
+          - invoice amount
+          - invoices
+          - invoice based
+        label: Billed revenue from invoices
+        description: Use invoice amounts as the monthly revenue basis.
+        selected_sources:
+          - stripe_invoices
+        selected_metrics:
+          - billed_revenue
+        selected_dimensions:
+          - invoice_month
+        selected_data_product: stripe_billing_reconciliation
+        generation:
+          mode: simple_pipeline
+          template: monthly_metric_pipeline
+          package_name: Stripe Monthly Billed Revenue Pipeline
+          source_name: stripe_invoices
+          source: stripe_invoices
+          staging_model: stg_stripe__invoices
+          mart_model: mart_billing__monthly_invoice_revenue
+          final_mart_name: mart_billing__monthly_invoice_revenue
+          time_dimension: invoice_month
+          value_column: invoice_amount
+          output_metric: billed_revenue
+          coalesce_value: true
+          selected_sources:
+            - stripe_invoices
+          selected_metrics:
+            - billed_revenue
+          selected_dimensions:
+            - invoice_month
+          model_files:
+            - stg_stripe__invoices.sql
+            - mart_billing__monthly_invoice_revenue.sql
+          test_files:
+            - schema.yml
+          documentation_files:
+            - pipeline_summary.md
+          staging_columns:
+            - invoice_id
+            - subscription_id
+            - invoice_month
+            - invoice_amount
+            - discount_amount
+          business_interpretation: Build a monthly billed revenue pipeline from Stripe invoices.
+        resolved_rule: Monthly revenue means billed revenue from invoices.
+        implementation: Use invoice_amount aggregated by invoice_month.
+
+      - id: collected_revenue
+        aliases:
+          - collected revenue
+          - payment revenue
+          - cash collected
+          - successful payments
+          - payments
+          - payment based
+        label: Collected revenue from payments
+        description: Use successful payment amounts as the monthly revenue basis.
+        selected_sources:
+          - stripe_payments
+        selected_metrics:
+          - collected_revenue
+        selected_dimensions:
+          - payment_month
+        selected_data_product: stripe_billing_reconciliation
+        generation:
+          mode: simple_pipeline
+          template: monthly_metric_pipeline
+          package_name: Stripe Monthly Collected Revenue Pipeline
+          source_name: stripe_payments
+          source: stripe_payments
+          staging_model: stg_stripe__payments
+          mart_model: mart_payments__monthly_collected_revenue
+          final_mart_name: mart_payments__monthly_collected_revenue
+          time_dimension: payment_month
+          value_column: successful_amount
+          output_metric: collected_revenue
+          coalesce_value: true
+          selected_sources:
+            - stripe_payments
+          selected_metrics:
+            - collected_revenue
+          selected_dimensions:
+            - payment_month
+          model_files:
+            - stg_stripe__payments.sql
+            - mart_payments__monthly_collected_revenue.sql
+          test_files:
+            - schema.yml
+          documentation_files:
+            - pipeline_summary.md
+          staging_columns:
+            - payment_id
+            - invoice_id
+            - payment_month
+            - successful_amount
+            - refund_amount
+          business_interpretation: Build a monthly collected revenue pipeline from Stripe payments.
+        resolved_rule: Monthly revenue means collected revenue from payments.
+        implementation: Use successful_amount aggregated by payment_month.
+
+      - id: gross_mrr
+        aliases:
+          - gross mrr
+          - mrr
+          - monthly recurring revenue
+          - subscription revenue
+          - subscriptions
+        label: Gross MRR from subscriptions
+        description: Use subscription MRR before discounts or refunds.
+        selected_sources:
+          - fact_subscriptions
+        selected_metrics:
+          - mrr
+          - gross_mrr
+        selected_dimensions:
+          - customer_segment
+        selected_data_product: subscription_revenue_360
+        resolved_rule: Monthly revenue means gross MRR from subscription records.
+        implementation: Use mrr_amount as gross_mrr.
+
+      - id: net_mrr
+        aliases:
+          - net mrr
+          - adjusted mrr
+          - net revenue
+          - after discounts
+          - after refunds
+          - discounts and refunds
+        label: Net revenue after discounts and refunds
+        description: Use revenue after discount and refund adjustments.
+        selected_sources:
+          - fact_subscriptions
+          - stripe_invoices
+          - stripe_payments
+        selected_metrics:
+          - net_mrr
+          - discount_amount
+          - refund_amount
+        selected_dimensions:
+          - invoice_month
+          - customer_segment
+        selected_data_product: subscription_revenue_360
+        resolved_rule: Monthly revenue means net revenue after discounts and refunds.
+        implementation: Combine MRR, discounts, and refunds into a net revenue metric.
+
+  - id: refund_discount_handling_for_revenue_product
+    enabled: true
+    description: Ask how to handle refunds and discounts when the request says those adjustments are unclear.
+    match:
+      all_any:
+        action_terms:
+          - create
+          - build
+          - generate
+          - prepare
+          - make
+          - draft
+          - help create
+          - help me create
+        artifact_terms:
+          - pipeline
+          - data product
+          - dataset
+          - mart
+          - model
+          - models
+          - dbt
+          - dashboard dataset
+        adjustment_terms:
+          - refund
+          - refunds
+          - discount
+          - discounts
+        uncertainty_terms:
+          - unclear
+          - not sure
+          - unsure
+          - should be handled
+          - how to handle
+          - how should
+      missing_explicit_choice_from_options: true
+    plan_defaults:
+      request_type: data_product_generation
+      selected_sources:
+        - dim_customers
+        - dim_plans
+        - fact_subscriptions
+        - stripe_invoices
+        - stripe_payments
+      selected_metrics:
+        - mrr
+        - gross_mrr
+        - net_mrr
+        - discount_amount
+        - refund_amount
+      selected_dimensions:
+        - invoice_month
+        - customer_segment
+      selected_data_product: subscription_revenue_360
+      business_interpretation: Create a revenue data product after the user confirms adjustment handling.
+      warnings:
+        - Refund and discount handling is ambiguous and must be confirmed before generation.
+    clarification:
+      id: q_refund_discount_handling
+      question: How should refunds and discounts be handled in the monthly revenue data product?
+      issue_summary: Refund and discount treatment changes whether the output reports gross revenue, net revenue, or both.
+      priority: must_answer
+      recommended_option_id: gross_and_net
+      recommendation_reason: It gives finance transparency and a board-ready net metric.
+      allow_custom_answer: true
+    options:
+      - id: gross_only
+        aliases:
+          - gross only
+          - show adjustments separately
+          - separate adjustments
+        label: Report gross MRR only and show adjustments separately
+        description: Keep gross MRR unchanged and expose adjustments separately.
+        selected_sources:
+          - fact_subscriptions
+          - stripe_invoices
+          - stripe_payments
+        selected_metrics:
+          - gross_mrr
+          - discount_amount
+          - refund_amount
+        selected_dimensions:
+          - invoice_month
+          - customer_segment
+        selected_data_product: subscription_revenue_360
+        resolved_rule: Keep gross MRR unchanged and expose discounts/refunds as separate supporting columns.
+        implementation: Build gross_mrr plus discount_amount and refund_amount without netting.
+
+      - id: net_only
+        aliases:
+          - net only
+          - net mrr
+          - subtract adjustments
+          - after discounts and refunds
+        label: Report net MRR after discounts and refunds
+        description: Deduct discounts and refunds from gross MRR.
+        selected_sources:
+          - fact_subscriptions
+          - stripe_invoices
+          - stripe_payments
+        selected_metrics:
+          - net_mrr
+          - discount_amount
+          - refund_amount
+        selected_dimensions:
+          - invoice_month
+          - customer_segment
+        selected_data_product: subscription_revenue_360
+        resolved_rule: Net MRR equals gross MRR minus discount and refund adjustments.
+        implementation: Derive net_mrr = gross_mrr - discount_amount - refund_amount.
+
+      - id: gross_and_net
+        aliases:
+          - gross and net
+          - both gross and net
+          - adjustment breakdown
+          - show both
+        label: Report both gross MRR and net MRR with adjustment breakdown
+        description: Show gross MRR, adjustment columns, and net MRR together.
+        selected_sources:
+          - dim_customers
+          - dim_plans
+          - fact_subscriptions
+          - stripe_invoices
+          - stripe_payments
+        selected_metrics:
+          - gross_mrr
+          - net_mrr
+          - discount_amount
+          - refund_amount
+        selected_dimensions:
+          - invoice_month
+          - customer_segment
+        selected_data_product: subscription_revenue_360
+        resolved_rule: Report gross_mrr, discount_amount, refund_amount, and net_mrr together.
+        implementation: Build gross and net MRR at invoice_month/customer_segment grain.

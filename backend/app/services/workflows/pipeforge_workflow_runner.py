@@ -23,6 +23,11 @@ from app.services.llm.openhands_artifact_generator import (
     generate_test_artifacts_with_openhands,
 )
 from app.services.metadata.relationship_validator import validate_relationships
+from app.services.pipeline.simple_pipeline_generator import (
+    build_simple_pipeline_package,
+    find_simple_pipeline_generation_config,
+    to_json as simple_pipeline_json_dumps,
+)
 from app.services.metadata.semantic_metadata_loader import get_relationships_for_sources
 from app.services.planning.llm_artifact_planner import plan_artifacts_with_llm
 from app.services.planning.llm_business_decision_planner import compact_profile_context_for_business_decisions, plan_business_decisions_with_llm
@@ -133,8 +138,11 @@ def _planner_question_to_answer_queue_dict(question: PlannerQuestion) -> dict[st
             }
         )
 
+    issue_id = question.issue_id or question.id
+
     return {
         "id": question.id,
+        "issue_id": issue_id,
         "question": question.question,
         "issue_summary": question.issue_summary,
         "priority": question.priority,
@@ -499,6 +507,172 @@ async def generate_artifacts_in_review_order(run_id: str, source_profile_context
     return artifacts
 
 
+async def run_simple_pipeline_generation(
+    *,
+    run_id: str,
+    prompt: str,
+    request_plan: RequestPlan,
+    metadata_context: dict[str, Any],
+    previous_user_answers: list[dict[str, Any]],
+    simple_pipeline_config: dict[str, Any],
+) -> None:
+    selected_sources = request_plan.selected_sources
+    if not selected_sources:
+        raise RuntimeError("Simple pipeline generation requires selected sources.")
+
+    agent = sub_agent("simple-pipeline-builder", "Simple Pipeline Builder")
+
+    await event_emitter.emit(
+        run_id,
+        "agent_response",
+        PIPELINE_ARCHITECT,
+        {"text": "This request is a simple reusable pipeline, so I will use the fast deterministic pipeline generator instead of the full OpenHands data-product flow."},
+    )
+
+    step5b_timer = log_step_start(run_id, "5B-lite", "Load simple pipeline contracts", {"selected_sources": selected_sources})
+    await event_emitter.emit(
+        run_id,
+        "tool_started",
+        PIPELINE_ARCHITECT,
+        {"toolCallId": "tool_load_simple_pipeline_contracts", "toolName": "load_selected_contracts", "input": {"sources": selected_sources}},
+    )
+    selected_contracts = load_selected_contracts(selected_sources)
+    await event_emitter.emit(
+        run_id,
+        "tool_completed",
+        PIPELINE_ARCHITECT,
+        {"toolCallId": "tool_load_simple_pipeline_contracts", "toolName": "load_selected_contracts", "output": {"loadedSources": list(selected_contracts.keys())}},
+    )
+    log_step_success(run_id, "5B-lite", "Load simple pipeline contracts", started_at=step5b_timer, details={"loaded_sources": list(selected_contracts.keys())})
+
+    # Keep a lightweight source-inspection artifact so the UI still shows the
+    # same transparent evidence trail, but avoid full multi-agent generation.
+    inspection = await selected_sources_inspector(run_id, selected_sources)
+
+    resolved_rules = _previous_answers_to_resolved_rules(previous_user_answers)
+    business_rules_yaml = _build_business_rules_yaml_with_planner_notes(
+        resolved_rules,
+        request_plan.assumptions,
+        request_plan.warnings,
+    )
+    business_rules_markdown = _build_business_rules_markdown_with_planner_notes(
+        resolved_rules,
+        request_plan.assumptions,
+        request_plan.warnings,
+    )
+    await artifact_store.write_artifact(run_id, PIPELINE_ARCHITECT, "business_rules.yml", business_rules_yaml, "yaml")
+    await artifact_store.write_artifact(run_id, PIPELINE_ARCHITECT, "business_rules.md", business_rules_markdown, "markdown")
+
+    step8_timer = log_step_start(
+        run_id,
+        "8B-lite",
+        "Build simple pipeline artifact plan",
+        {"selected_sources": selected_sources, "config_option": (simple_pipeline_config.get("option") or {}).get("id")},
+    )
+    await event_emitter.emit(
+        run_id,
+        "tool_started",
+        agent,
+        {"toolCallId": "tool_build_simple_pipeline_plan", "toolName": "build_simple_pipeline_plan", "input": {"selectedSources": selected_sources}},
+    )
+    artifact_plan, generated_artifacts = build_simple_pipeline_package(
+        metadata_context=metadata_context,
+        request_plan=request_plan,
+        config=simple_pipeline_config,
+    )
+    registry.runs[run_id]["artifactPlan"] = artifact_plan
+    await event_emitter.emit(
+        run_id,
+        "tool_completed",
+        agent,
+        {"toolCallId": "tool_build_simple_pipeline_plan", "toolName": "build_simple_pipeline_plan", "output": artifact_plan},
+    )
+    await artifact_store.write_artifact(run_id, PIPELINE_ARCHITECT, "artifact_plan.json", simple_pipeline_json_dumps(artifact_plan), "json")
+    validation_context = build_validation_context_from_contracts(selected_contracts=selected_contracts, artifact_plan=artifact_plan)
+    registry.runs[run_id]["validationContext"] = validation_context.to_dict()
+    log_step_success(
+        run_id,
+        "8B-lite",
+        "Build simple pipeline artifact plan",
+        started_at=step8_timer,
+        details={"artifact_plan": artifact_plan, "validation_context": validation_context.to_dict()},
+    )
+
+    step10_timer = log_step_start(run_id, "10B-lite", "Generate simple pipeline artifacts", {"artifact_plan": artifact_plan})
+    await event_emitter.emit(run_id, "sub_agent_started", agent, {"status": "running"})
+    await event_emitter.emit(
+        run_id,
+        "agent_thinking",
+        agent,
+        {"text": "I will generate a small runnable SQL pipeline directly from metadata configuration."},
+    )
+    await event_emitter.emit(
+        run_id,
+        "tool_started",
+        agent,
+        {"toolCallId": "tool_generate_simple_pipeline_artifacts", "toolName": "generate_simple_pipeline_artifacts", "input": {"targetFiles": [artifact["filename"] for artifact in generated_artifacts]}},
+    )
+    written_artifacts: list[dict[str, Any]] = []
+    for artifact in generated_artifacts:
+        await artifact_store.write_artifact(run_id, agent, artifact["filename"], artifact["content"], artifact["type"])
+        written_artifacts.append(artifact)
+    await event_emitter.emit(
+        run_id,
+        "tool_completed",
+        agent,
+        {"toolCallId": "tool_generate_simple_pipeline_artifacts", "toolName": "generate_simple_pipeline_artifacts", "output": {"createdFiles": [artifact["filename"] for artifact in written_artifacts]}},
+    )
+    await event_emitter.emit(run_id, "sub_agent_completed", agent, {"status": "completed", "summary": "Generated simple pipeline artifacts."})
+    log_step_success(run_id, "10B-lite", "Generate simple pipeline artifacts", started_at=step10_timer, details={"artifact_count": len(written_artifacts), "created_files": [artifact.get("filename") for artifact in written_artifacts]})
+
+    step11_timer = log_step_start(run_id, "11B-lite", "Validate simple pipeline artifacts", {"artifact_plan": artifact_plan})
+    await event_emitter.emit(
+        run_id,
+        "tool_started",
+        PIPELINE_ARCHITECT,
+        {"toolCallId": "tool_validate_simple_pipeline_artifacts", "toolName": "validate_generated_artifacts", "input": {"artifactPlan": artifact_plan}},
+    )
+    validation_result = validate_generated_artifacts(
+        artifacts=written_artifacts,
+        artifact_plan=artifact_plan,
+        validation_context=validation_context,
+    )
+    await event_emitter.emit(
+        run_id,
+        "tool_completed",
+        PIPELINE_ARCHITECT,
+        {"toolCallId": "tool_validate_simple_pipeline_artifacts", "toolName": "validate_generated_artifacts", "output": validation_result},
+    )
+    log_step_success(run_id, "11B-lite", "Validate simple pipeline artifacts", started_at=step11_timer, details=validation_result)
+
+    package_name = artifact_plan.get("package_name", "Simple Pipeline Draft")
+    final_mart = artifact_plan.get("final_mart_name", "configured final mart")
+    final_text = f"""Your {package_name} is ready for review.
+
+Sources:
+{', '.join(selected_sources)}
+
+Final mart:
+{final_mart}
+
+Generated package:
+- Source profile and data quality report
+- Resolved business rules
+- artifact_plan.json
+- SQL model files: {', '.join(artifact_plan.get('model_files', []))}
+- Test files: {', '.join(artifact_plan.get('test_files', []))}
+- Documentation files: {', '.join(artifact_plan.get('documentation_files', []))}
+
+Recommended next steps:
+1. Review the generated SQL/YAML/Markdown artifacts.
+2. Open the Pipeline tab and run the generated models manually into the demo data mart.
+3. Preview/download generated output tables.
+"""
+    step13_timer = log_step_start(run_id, "13B-lite", "Return simple pipeline artifacts", {"package_name": package_name, "final_mart": final_mart, "selected_sources": selected_sources})
+    await _complete_run(run_id, final_text)
+    log_step_success(run_id, "13B-lite", "Return simple pipeline artifacts", started_at=step13_timer, details={"status": "completed", "profile_context_chars": len(inspection.get("source_profile_context", ""))})
+
+
 async def run_data_product_generation(
     *,
     run_id: str,
@@ -510,6 +684,22 @@ async def run_data_product_generation(
     selected_sources = request_plan.selected_sources
     if not selected_sources:
         raise RuntimeError("Data product generation requires selected sources.")
+
+    simple_pipeline_config = find_simple_pipeline_generation_config(
+        metadata_context=metadata_context,
+        request_plan=request_plan,
+        previous_user_answers=previous_user_answers,
+    )
+    if simple_pipeline_config is not None:
+        await run_simple_pipeline_generation(
+            run_id=run_id,
+            prompt=prompt,
+            request_plan=request_plan,
+            metadata_context=metadata_context,
+            previous_user_answers=previous_user_answers,
+            simple_pipeline_config=simple_pipeline_config,
+        )
+        return
 
     await event_emitter.emit(
         run_id,
